@@ -40,7 +40,7 @@ namespace CASExampleHelper {
 // version). Bump it whenever anything in common/ changes, and record the
 // change in common/CHANGELOG.md - every example in the series must then be
 // re-synced to the same common/ version.
-static const char* COMMON_VERSION = "2.1.0";
+static const char* COMMON_VERSION = "2.2.0";
 
 // Print the example's name + version, the linked CAS BACnet Stack version,
 // and the common/ helper version.
@@ -170,8 +170,13 @@ enum class KeyCommand {
     Quit,        // 'q' - exit
     ArrowUp,     // up arrow
     ArrowDown,   // down arrow
-    DemoAdvance  // 's' - advance a demo (e.g. a Schedule) to its next step now,
-                 //       bypassing whatever wall-clock wait it would otherwise need
+    DemoAdvance,   // 's' - advance a demo (e.g. a Schedule) to its next step now,
+                   //       bypassing whatever wall-clock wait it would otherwise need
+    WriteGroupDemo,// 'w' - manually fire a demo WriteGroup (or other outbound
+                   //       SendWriteProperty) instead of waiting for whatever
+                   //       triggers it normally
+    DiscoverRemote // 'd' - send a demo SendWhoIs to discover a remote device
+                   //       this example writes to or reads from
 };
 
 // Non-blocking: returns a pending key command, or None if nothing was pressed.

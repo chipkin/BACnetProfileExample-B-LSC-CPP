@@ -47,7 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linked against the CAS BACnet Stack `6.x` @ `abd4cee1` (reports 6.0.21) as a
   prebuilt **STATIC** library (`CAS_BACNET_STACK_LINK=STATIC`), built by
   `tools/build-stack-static.sh` from the stack's own project files.
-- `common/` vendored at **v2.1.0**, byte-identical to the rest of the series.
+- `common/` vendored at **v2.2.0**, byte-identical to the rest of the series
+  (re-synced mid-task after B-LS's `WriteGroupDemo`/`DiscoverRemote` key bump
+  landed - purely additive, no `main.cpp` change needed).
 - All required Protocol_Revision 24 properties across every object; strict build
   warnings on the example's own sources.
 

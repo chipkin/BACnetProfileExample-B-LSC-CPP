@@ -16,7 +16,7 @@ per BACnet device profile. This example claims **only** B-LSC.
 > **Versions:** this document describes **example v1.0.0**, built and verified
 > against **CAS BACnet Stack 6.0.21 (`6.x` @ `abd4cee1`)**, linked as a static
 > library, at **Protocol_Revision 24**, with the vendored `common/` helper at
-> **v2.1.0**. Running the example prints all three - if what it prints disagrees
+> **v2.2.0**. Running the example prints all three - if what it prints disagrees
 > with this line, trust the program and check `CHANGELOG.md`.
 
 > **B-LSC is not fully claimable with the standard stack yet.** This example

@@ -493,6 +493,8 @@ KeyCommand PollKey() {
     if (c == 'h' || c == 'H') return KeyCommand::Help;
     if (c == 'q' || c == 'Q') return KeyCommand::Quit;
     if (c == 's' || c == 'S') return KeyCommand::DemoAdvance;
+    if (c == 'w' || c == 'W') return KeyCommand::WriteGroupDemo;
+    if (c == 'd' || c == 'D') return KeyCommand::DiscoverRemote;
     return KeyCommand::None;
 #else
     EnableRawInput();
@@ -509,6 +511,8 @@ KeyCommand PollKey() {
     if (buf[0] == 'h' || buf[0] == 'H') return KeyCommand::Help;
     if (buf[0] == 'q' || buf[0] == 'Q') return KeyCommand::Quit;
     if (buf[0] == 's' || buf[0] == 'S') return KeyCommand::DemoAdvance;
+    if (buf[0] == 'w' || buf[0] == 'W') return KeyCommand::WriteGroupDemo;
+    if (buf[0] == 'd' || buf[0] == 'D') return KeyCommand::DiscoverRemote;
     return KeyCommand::None;
 #endif
 }

@@ -12,6 +12,24 @@ entry here, and must then be re-copied into **every** example in the series.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the folder adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-09-15
+
+### Added
+
+- `KeyCommand::WriteGroupDemo` (key `w` / `W`) and `KeyCommand::DiscoverRemote`
+  (key `d` / `D`), wired in `PollKey()` on both the Windows (`_getch`) and
+  POSIX (raw-terminal `read`) code paths. Non-breaking, purely additive:
+  existing `switch (CASExampleHelper::PollKey())` call sites with a `default:`
+  case (every current example) build unchanged.
+- Claimed in the series-wide `docs/menu-keys.md`: `WriteGroupDemo` manually
+  fires a demo WriteGroup (or other outbound `SendWriteProperty`) instead of
+  waiting for whatever normally triggers it; `DiscoverRemote` sends a demo
+  `SendWhoIs` to discover a remote device this example writes to or reads
+  from. First consumer: `BACnetProfileExample-B-LS-CPP`'s F-CHANNEL /
+  F-EXTWRITE / F-SCHED-E demo (Wave 2); any later example with a remote-write
+  or remote-discovery demo reuses these same keys rather than claiming new
+  ones.
+
 ## [2.1.0] - 2026-09-15
 
 ### Added
