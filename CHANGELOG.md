@@ -27,10 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   B-AAC's Diamond OutOfRange demo - see the file header in `main.cpp` for why
   this example does not use the stack's internal (not customer-exported)
   life-safety engine.
-- **AE-LS-B's LifeSafetyOperation responder**
+- **LifeSafetyOperation responder implemented**
   (`BACnetStack_RegisterCallbackLifeSafetyOperation`): silence/unsilence (whole,
   audible-only, visual-only) and reset/reset-alarm/reset-fault, applied to Amber,
-  Azure, or both.
+  Azure, or both. Registered but **not enabled** on the linked static library -
+  see "Not yet implemented" below.
 - **AE-ACK-B** (AcknowledgeAlarm) and **AE-INFO-B** (GetEventInformation).
 - **DS-COV-B:** Analog Input 1 "Bronze" and Life Safety Point 1 "Amber"
   `Present_Value` are COV-subscribable (`SetPropertySubscribable` +
@@ -47,17 +48,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linked against the CAS BACnet Stack `6.x` @ `abd4cee1` (reports 6.0.21) as a
   prebuilt **STATIC** library (`CAS_BACNET_STACK_LINK=STATIC`), built by
   `tools/build-stack-static.sh` from the stack's own project files.
-- `common/` vendored at **v2.2.0**, byte-identical to the rest of the series
-  (re-synced mid-task after B-LS's `WriteGroupDemo`/`DiscoverRemote` key bump
-  landed - purely additive, no `main.cpp` change needed).
+- `common/` vendored at **v2.5.0**, byte-identical to the rest of the series
+  (re-synced mid-task, twice: after B-LS's `WriteGroupDemo`/`DiscoverRemote`
+  key bump, then again after B-RTR's multi-port `SetupUDP` support landed -
+  both purely additive, no `main.cpp` change needed; this example still calls
+  the single-argument `SetupUDP(port)` overload, whose behaviour is
+  unchanged).
 - All required Protocol_Revision 24 properties across every object; strict build
   warnings on the example's own sources.
 
 ### Not yet implemented (see [TODO.md](TODO.md))
 
+- **⚠ CRITICAL: Life Safety Point 1 (Amber) and Life Safety Zone 1 (Azure)
+  cannot serve almost any property.** Verified by running the built binary
+  against a live `bacpypes3` client: `Object_List`/`Object_Identifier`/
+  `Object_Type` are correct, but `Object_Name`, `Present_Value`,
+  `Out_Of_Service`, and the WriteProperty this repo's own alarm/fault demo
+  relies on all answer `unknown-object`. Root cause is in the stack
+  (`BACnetDBDevice::GetGeneratedPropertyValue`/`SetGeneratedPropertyValue`
+  require the internal `BACnetStackLifeSafetyPoint`/`Zone` engine object,
+  populated only by the non-customer-exported `AddLifeSafetyPointObject`/
+  `AddLifeSafetyZoneObject`), not this example's code. See TODO.md #0 and
+  [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036).
 - **Life Safety Zone 1 (Azure)'s `Zone_Members`** - no customer-facing callback
   can serve this required, constructed `BACnetLIST of BACnetDeviceObjectReference`
   property (`BACnetStack_RegisterCallbackGetPropertyConstructed` is test-tool
   only).
+- **LifeSafetyOperation (service 37) not enabled** - confirmed by running the
+  built binary: the linked static library was compiled without
+  `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (not part of this series'
+  `STACK_OPTION_TARGET_FULL` build preset). The callback is registered and
+  implemented; the service bit is left off rather than advertised-and-broken.
 
 [1.0.0]: https://github.com/chipkin/BACnetProfileExample-B-LSC-CPP/releases/tag/v1.0.0

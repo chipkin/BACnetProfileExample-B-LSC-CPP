@@ -6,9 +6,10 @@ A tutorial example showing how to implement **as much of the BACnet B-LSC
 supports today, in C++. It answers **ReadProperty / ReadPropertyMultiple**,
 accepts **WriteProperty / WritePropertyMultiple**, accepts **SubscribeCOV**,
 generates **intrinsic life-safety alarms** (`CHANGE_OF_LIFE_SAFETY`
-EventNotifications), accepts **AcknowledgeAlarm**, **GetEventInformation** and
-**LifeSafetyOperation** (silence/unsilence/reset), synchronises its clock, and
-handles **DeviceCommunicationControl** and **ReinitializeDevice**.
+EventNotifications), accepts **AcknowledgeAlarm** and **GetEventInformation**,
+implements (but - see below - cannot currently enable on the wire) a
+**LifeSafetyOperation** responder (silence/unsilence/reset), synchronises its
+clock, and handles **DeviceCommunicationControl** and **ReinitializeDevice**.
 
 Part of the CAS BACnet Stack **BACnet profile example series** - one repository
 per BACnet device profile. This example claims **only** B-LSC.
@@ -16,16 +17,24 @@ per BACnet device profile. This example claims **only** B-LSC.
 > **Versions:** this document describes **example v1.0.0**, built and verified
 > against **CAS BACnet Stack 6.0.21 (`6.x` @ `abd4cee1`)**, linked as a static
 > library, at **Protocol_Revision 24**, with the vendored `common/` helper at
-> **v2.2.0**. Running the example prints all three - if what it prints disagrees
+> **v2.5.0**. Running the example prints all three - if what it prints disagrees
 > with this line, trust the program and check `CHANGELOG.md`.
 
-> **B-LSC is not fully claimable with the standard stack yet.** This example
-> implements every B-LSC capability the standard CAS BACnet Stack's
-> customer-facing API exposes, and clearly marks what it cannot do. **See
-> [TODO.md](TODO.md)** and "What this example does NOT do yet" below. The
-> remaining gap is Life Safety Zone 1 (Azure)'s `Zone_Members`, a stack-documented
-> limitation (no customer-facing constructed-property callback), not a missing
-> feature of this example.
+> **⚠ CRITICAL, VERIFIED LIMITATION: Life Safety Point/Zone objects (Amber,
+> Azure) currently cannot serve almost any property over the wire.** Confirmed
+> by running the built binary against a live BACnet client: `Object_List`
+> correctly lists both objects and `Object_Identifier`/`Object_Type` read back,
+> but `Object_Name`, `Present_Value`, `Out_Of_Service`, and every other
+> property answer `Error(...): object: unknown-object` - and the same
+> WriteProperty of `Present_Value` this README uses as the alarm/fault demo
+> trigger fails the same way. **Root cause is in the stack, not this example's
+> code** - see **[TODO.md #0](TODO.md)** for the full trace (it names the exact
+> source lines) and the filed stack issue
+> ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)).
+> This example implements every B-LSC capability the standard CAS BACnet
+> Stack's customer-facing API exposes, and this is the dominant thing it
+> cannot do - full list in **[TODO.md](TODO.md)** and "What this example does
+> NOT do yet" below.
 
 This example is seeded from
 [B-AAC (Advanced Application Controller)](https://github.com/chipkin/BACnetProfileExample-B-AAC-CPP)
@@ -72,6 +81,8 @@ the write, `Event_State` becomes `life-safety-alarm`, and an
 `UnconfirmedEventNotification` goes out to the recipient. Write `0` (quiet) to
 return to normal. By default the recipient is the **local subnet broadcast** (so
 any client sees the alarm); point it at a specific client in `main.cpp`.
+**As shipped, this WriteProperty itself currently fails - see the ⚠ callout
+above and [TODO.md #0](TODO.md) before trying this.**
 
 **Why WriteProperty, not a physical input?** The real stack's own life-safety
 engine (`BACnetStackLifeSafetyPoint`/`Zone`) and its "physical input" seam
@@ -90,12 +101,15 @@ tutorial's trigger, deliberately beyond the profile's read-only column (Table
 12-18/12-19) - a product with a real smoke/pull-station input would drive
 `Present_Value` from hardware and leave WriteProperty rejected.
 
-**LifeSafetyOperation (AE-LS-B).** A client sends `silence` / `unsilence` (whole,
+**LifeSafetyOperation.** A client sends `silence` / `unsilence` (whole,
 audible-only, or visual-only) or `reset` / `reset-alarm` / `reset-fault` -
 `BACnetStack_RegisterCallbackLifeSafetyOperation` delivers it to this example's
 `LifeSafetyOperation()`, which updates `Silenced` and (for a RESET) `Present_Value`
 for Amber, Azure, or both (no object identifier in the request means "every
-life-safety object", per cl. 13.8.1.4).
+life-safety object", per cl. 13.8.1.4). **The service is implemented in this
+example's code but not currently enabled on the wire** - see "What this
+example does NOT do yet" below; DM-LSO-B is not itself a BIBB B-LSC requires,
+so this does not affect the profile table above.
 
 ## DS-COV-B
 
@@ -137,10 +151,30 @@ additions**. Object names follow the series' colour convention (Device is always
 
 ## What this example does NOT do yet
 
-A faithful, honest example: this one B-LSC-adjacent detail is **not** implemented,
-because the standard CAS BACnet Stack does not yet expose a way to. Full detail and
-"what it would take" is in **[TODO.md](TODO.md)**.
+A faithful, honest example: these three B-LSC-adjacent details are **not**
+implemented, because the standard CAS BACnet Stack does not yet expose a way
+to (or, for the third, ship a build configured to). Full detail and "what it
+would take" is in **[TODO.md](TODO.md)**.
 
+- **⚠ Life Safety Point 1 (Amber) and Life Safety Zone 1 (Azure) cannot serve
+  almost any property.** `BACnetStack_AddObject` (the only customer-facing way
+  to create one) never populates the stack's internal
+  `BACnetStackLifeSafetyPoint`/`Zone` engine object - only
+  `BACnetDBDevice::AddLifeSafetyPointObject`/`AddLifeSafetyZoneObject` do that,
+  and neither is exported. The stack's own
+  `GetGeneratedPropertyValue`/`SetGeneratedPropertyValue` special-case these
+  two object types and answer `unknown-object` for every property except
+  `Object_Identifier`/`Object_Type` when that internal object is missing -
+  **before ever reaching this example's own callbacks.** Confirmed by running
+  the built binary against a live client: `Object_List` is correct, but
+  `Object_Name`, `Present_Value`, `Mode`, `Out_Of_Service`, etc. all fail, and
+  so does the WriteProperty this README documents as the alarm/fault trigger.
+  See **[TODO.md #0](TODO.md)** for the full trace and
+  [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036).
+  This is a stack-source gap, not an error in how this example follows the
+  documented pattern (which is otherwise identical, and correct, to every
+  other object in this file) - and the fix, once the stack exports the
+  missing `Add*` functions, is a small, mechanical addition to `main.cpp`.
 - **Life Safety Zone 1 (Azure)'s `Zone_Members`** - a required (cl. 12.16)
   `BACnetLIST of BACnetDeviceObjectReference`. The only customer-facing callback
   that can serve an arbitrary constructed property,
@@ -149,6 +183,17 @@ because the standard CAS BACnet Stack does not yet expose a way to. Full detail 
   the PR #193 review comment next to its declaration in `CASBACnetStackDLL.h`).
   Azure still exists as a correctly-served object otherwise, with its own
   (independent, not member-derived) `Present_Value`/`Tracking_Value`.
+- **LifeSafetyOperation is not enabled on the wire.** Confirmed by running the
+  built binary: the linked static library was compiled from the stack's own
+  project file without `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (not part
+  of the `STACK_OPTION_TARGET_FULL` preset this whole series builds with), so
+  `BACnetStack_RegisterCallbackLifeSafetyOperation()` logs "This feature was
+  not compiled" at start-up. This example still registers the callback and
+  implements `LifeSafetyOperation()` (see above) - it needs zero code changes
+  if a future series-wide stack build enables that option - but leaves
+  `Protocol_Services_Supported` bit 37 **off** rather than advertise a service
+  the linked library cannot execute. DM-LSO-B is not itself a BIBB B-LSC
+  requires, so this does not affect the profile table above.
 
 ## Before you ship
 
@@ -289,29 +334,42 @@ and published in **STATIC** mode only.
 ## Verify
 
 With the [CAS BACnet Explorer](https://store.chipkin.com/products/tools/cas-bacnet-explorer)
-(or any client, e.g. `bacpypes3`/`BAC0`):
+(or any client, e.g. `bacpypes3`/`BAC0`). Steps 1-2 were run against the built
+binary with `bacpypes3` in this task and passed as described; steps 3 and 5-8
+were **not** exercised this session (flagged rather than assumed) and step 4
+is currently expected to fail - see [TODO.md #0](TODO.md).
 
-1. **Discover** - Who-Is -> I-Am from `389007` (vendor `389`).
+1. **Discover** - Who-Is -> I-Am from `389007` (vendor `389`). ✅ verified.
 2. **Object model** - ten objects incl. Life Safety Point "Amber", Life Safety
    Zone "Azure", Notification Class "Crimson". `Object_List` lists them all;
-   `Protocol_Revision` = 24.
+   `Protocol_Revision` = 24. ✅ verified (`Object_Identifier`/`Object_Type` also
+   read back correctly on Amber/Azure - everything else on those two does not,
+   see below).
 3. **ReadPropertyMultiple** - read several properties of "Amber" in one request
-   (DS-RPM-B).
+   (DS-RPM-B). Not exercised this session.
 4. **Fire a life-safety alarm** - WriteProperty Amber's `Mode` (any value) then
    `Present_Value` = `2` (alarm); read `Event_State` (`life-safety-alarm`) and
    watch the `CHANGE_OF_LIFE_SAFETY` EventNotification arrive. Write `0` to return
-   to quiet.
+   to quiet. **Currently fails**: WriteProperty of `Present_Value` (and
+   `ReadProperty` of nearly everything on Amber/Azure) answers
+   `Error(...): object: unknown-object` - see [TODO.md #0](TODO.md).
 5. **Acknowledge** - send AcknowledgeAlarm for Amber (AE-ACK-B); the device logs
-   it. Query active events with GetEventInformation (AE-INFO-B).
-6. **LifeSafetyOperation** - send `silence` (or `silence-audible`/`silence-visual`)
-   for Amber; read back `Silenced`. Send `reset-alarm` to clear a latched alarm.
+   it. Query active events with GetEventInformation (AE-INFO-B). Not exercised
+   this session (blocked on step 4 above to get an object into alarm first).
+6. **LifeSafetyOperation** - **not enabled on the linked static library** (see
+   "What this example does NOT do yet"); a request for it is expected to answer
+   `unrecognized-service` rather than being executed (not empirically sent this
+   session).
 7. **COV (DS-COV-B)** - SubscribeCOV to Bronze's or Amber's `Present_Value`; press
    up/down (Bronze) or WriteProperty Amber's `Present_Value` and confirm a COV
-   notification arrives.
+   notification arrives. Not exercised this session.
 8. **Device management** - DeviceCommunicationControl `disable-initiation` /
    `enable`; ReinitializeDevice `COLDSTART` (confirm a SimpleACK, then the device
    actually restarts and re-announces with an I-Am); TimeSynchronization /
-   UTCTimeSynchronization - each is accepted.
+   UTCTimeSynchronization - each is accepted. Not exercised this session; the
+   `ReinitializeDevice`/`SetSystemTime`/`DeviceCommunicationControl` code paths
+   are carried over unchanged from B-AAC/B-ASC, which verified them in their
+   own tasks.
 
 ## What's in this repository
 
@@ -412,7 +470,7 @@ Every object this example creates, and every REQUIRED property of each (per ANSI
 | Relinquish_Default | Unsigned | app | no |
 | Current_Command_Priority | BACnetOptionalUnsigned | stack | no |
 
-### Life Safety Point 1 "Amber" - F-LIFESAFETY / F-ALARM-LS (canonical: B-LSC). BACnetLifeSafetyState Present_Value: quiet(0)/alarm(2)/fault(3); Tracking_Value mirrors it (this example's simplification - see main.cpp file header for why it does not use the stack's internal, non-customer-exported life-safety engine). Present_Value is made WRITABLE beyond the profile's read-only column purely as this tutorial's alarm/fault trigger (mirrors B-AAC's Diamond). Mode is required-writable by the profile and accepted unconditionally (no customer-facing Accepted_Modes setter exists - see the file header); Accepted_Modes is therefore accepted at the stack's generic default. Event_State is NOT actually a stack default here - it is genuinely computed, because this example arms ChangeOfLifeSafety + fault intrinsic algorithms on Amber (SetIntrinsicChangeOfLifeSafetyAlgorithm/SetFaultLifeSafetyAlgorithm); it is marked accepted only because property-profile-reference.md's generic table does not know an algorithm was armed (same convention as B-AAC's Diamond). Present_Value is also DS-COV-B subscribable
+### Life Safety Point 1 "Amber" - VERIFIED CRITICAL GAP (TODO.md #0): almost every property on this object currently answers unknown-object over the wire, because BACnetStack_AddObject never populates the stack internal life-safety engine object (AddLifeSafetyPointObject/AddLifeSafetyZoneObject are not customer-exported) - see chipkin/cas-bacnet-stack#2036. F-LIFESAFETY / F-ALARM-LS (canonical: B-LSC). BACnetLifeSafetyState Present_Value: quiet(0)/alarm(2)/fault(3); Tracking_Value mirrors it (this example's simplification - see main.cpp file header for why it does not use the stack's internal, non-customer-exported life-safety engine). Present_Value is made WRITABLE beyond the profile's read-only column purely as this tutorial's alarm/fault trigger (mirrors B-AAC's Diamond). Mode is required-writable by the profile and accepted unconditionally (no customer-facing Accepted_Modes setter exists - see the file header); Accepted_Modes is therefore accepted at the stack's generic default. Event_State is NOT actually a stack default here - it is genuinely computed, because this example arms ChangeOfLifeSafety + fault intrinsic algorithms on Amber (SetIntrinsicChangeOfLifeSafetyAlgorithm/SetFaultLifeSafetyAlgorithm); it is marked accepted only because property-profile-reference.md's generic table does not know an algorithm was armed (same convention as B-AAC's Diamond). Present_Value is also DS-COV-B subscribable
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|
@@ -430,7 +488,7 @@ Every object this example creates, and every REQUIRED property of each (per ANSI
 | Silenced | BACnetSilencedState | app | no |
 | Operation_Expected | BACnetLifeSafetyOperation | app | no |
 
-### Life Safety Zone 1 "Azure" - F-LIFESAFETY / F-ALARM-LS. Event_State is genuinely computed (same as Amber's - ChangeOfLifeSafety + fault algorithms armed on Azure too), marked accepted for the same generator-limitation reason. Same shape as Amber (this example holds Azure's own independent Present_Value rather than rolling it up from Zone_Members - the stack's real zone roll-up engine is not customer-exported, see the file header). Zone_Members (cl. 12.16, required, BACnetLIST of BACnetDeviceObjectReference) has NO servable path on the customer surface: the only generic constructed-property callback, BACnetStack_RegisterCallbackGetPropertyConstructed, was moved to the test-tool DLL (CASBACnetStackDLL.h's own PR #193 review comment) and is forbidden by this series. See TODO.md and the filed stack issue - this is a real, verified gap, not a convenience shortcut
+### Life Safety Zone 1 "Azure" - VERIFIED CRITICAL GAP (TODO.md #0): almost every property on this object currently answers unknown-object over the wire, because BACnetStack_AddObject never populates the stack internal life-safety engine object (AddLifeSafetyPointObject/AddLifeSafetyZoneObject are not customer-exported) - see chipkin/cas-bacnet-stack#2036. F-LIFESAFETY / F-ALARM-LS. Event_State is genuinely computed (same as Amber's - ChangeOfLifeSafety + fault algorithms armed on Azure too), marked accepted for the same generator-limitation reason. Same shape as Amber (this example holds Azure's own independent Present_Value rather than rolling it up from Zone_Members - the stack's real zone roll-up engine is not customer-exported, see the file header). Zone_Members (cl. 12.16, required, BACnetLIST of BACnetDeviceObjectReference) has NO servable path on the customer surface: the only generic constructed-property callback, BACnetStack_RegisterCallbackGetPropertyConstructed, was moved to the test-tool DLL (CASBACnetStackDLL.h's own PR #193 review comment) and is forbidden by this series. See TODO.md and the filed stack issue - this is a real, verified gap, not a convenience shortcut
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|
@@ -516,7 +574,7 @@ The CAS BACnet Stack supports every standardized device profile in ASHRAE 135-20
 
 | Profile | Example | Required BIBBs (services) |
 |---|---|---|
-| **B-EM** Elevator Monitor | [B-EM-CPP](https://github.com/chipkin/BACnetProfileExample-B-EM-CPP) 📝 | ✅ DS-RP-B · ✅ DS-RPM-B · ✅ DS-COV-B · ✅ DS-COVM-B · ✅ AE-N-I-B · ✅ AE-ACK-B · ✅ AE-INFO-B · ✅ DM-DDB-B · ✅ DM-DOB-B · ✅ DM-DCC-B |
+| **B-EM** Elevator Monitor | [B-EM-CPP](https://github.com/chipkin/BACnetProfileExample-B-EM-CPP) ✅ | ✅ DS-RP-B · ✅ DS-RPM-B · ✅ DS-COV-B · ✅ DS-COVM-B · ✅ AE-N-I-B · ✅ AE-ACK-B · ✅ AE-INFO-B · ✅ DM-DDB-B · ✅ DM-DOB-B · ✅ DM-DCC-B |
 | **B-EC** Elevator Controller | [B-EC-CPP](https://github.com/chipkin/BACnetProfileExample-B-EC-CPP) 📝 | ✅ DS-RP-B · ✅ DS-RPM-B · ✅ DS-WP-B · ✅ DS-WPM-B · ✅ DS-COV-B · ✅ DS-COVM-B · ✅ AE-N-I-B · ✅ AE-ACK-B · ✅ AE-INFO-B · ✅ DM-DDB-A · ✅ DM-DDB-B · ✅ DM-DOB-B · ✅ DM-DCC-B · ✅ DM-TS-B / DM-UTC-B · ✅ DM-RD-B |
 | **B-AEC** Advanced Elevator Controller | [B-AEC-CPP](https://github.com/chipkin/BACnetProfileExample-B-AEC-CPP) 📝 | ✅ DS-RP-B · ✅ DS-RPM-B · ✅ DS-WP-B · ✅ DS-WPM-B · ✅ DS-COV-B · ✅ DS-COVM-B · ✅ AE-N-I-B · ✅ AE-ACK-B · ✅ AE-INFO-B · ✅ AE-EL-I-B · ✅ SCHED-I-B · ✅ DM-DDB-A · ✅ DM-DDB-B · ✅ DM-DOB-B · ✅ DM-DCC-B · ✅ DM-TS-B / DM-UTC-B · ✅ DM-OCD-B · ✅ DM-RD-B · ✅ DM-BR-B |
 

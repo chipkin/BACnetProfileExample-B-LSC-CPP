@@ -24,6 +24,27 @@
 //     DM-RD-B             - ReinitializeDevice.
 //
 // WHAT IS NOT IMPLEMENTED (see README.md "What this example does NOT do" + TODO.md):
+//   - CRITICAL, VERIFIED OVER THE WIRE: Life Safety Point 1 "Amber" and Life
+//     Safety Zone 1 "Azure" cannot currently serve almost any property.
+//     BACnetStack_AddObject (the only customer-facing way to create one) never
+//     populates the stack's internal BACnetStackLifeSafetyPoint/Zone engine
+//     object; only the internal, non-exported
+//     BACnetDBDevice::AddLifeSafetyPointObject/AddLifeSafetyZoneObject do
+//     that. The stack's GetGeneratedPropertyValue/SetGeneratedPropertyValue
+//     (BACnetDBDevice.cpp ~line 10521 / ~12786) special-case these two object
+//     types and answer unknown-object for every property but
+//     Object_Identifier/Object_Type when that internal object is missing -
+//     BEFORE this file's own GetProperty*/SetProperty* callbacks are ever
+//     reached. Confirmed with a live bacpypes3 client: ReadProperty of
+//     Object_Name/Present_Value/Out_Of_Service and WriteProperty of
+//     Present_Value (this file's own alarm/fault demo trigger, below) all
+//     fail with unknown-object. See TODO.md #0 (full trace) and
+//     https://github.com/chipkin/cas-bacnet-stack/issues/2036 (filed stack
+//     issue). This is a stack-source gap, not an error in how this file
+//     follows the documented AddObject + Get/Set-callback pattern - the fix,
+//     once the stack exports BACnetStack_AddLifeSafetyPointObject/
+//     AddLifeSafetyZoneObject, is a small, mechanical addition right after
+//     the BACnetStack_AddObject calls in main() below.
 //   - Life Safety Zone 1 "Azure"'s Zone_Members: this is a required (cl. 12.16)
 //     BACnetLIST of BACnetDeviceObjectReference - a constructed, variable-length
 //     type. The only customer-facing callback that can serve an arbitrary
@@ -56,6 +77,15 @@
 //     no customer-facing setter either, so an empty/default Accepted_Modes here
 //     would - per the stack's own literal reading of cl. 12.15.13 - accept NO
 //     Mode write at all, which would fail DM's own writability expectation).
+//   - LifeSafetyOperation (service 37) is not ENABLED (Protocol_Services_Supported
+//     bit left off), confirmed by running the built binary: the linked static
+//     library was compiled from the stack's own project file without
+//     STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION (not part of the
+//     STACK_OPTION_TARGET_FULL preset this whole series builds with), so
+//     BACnetStack_RegisterCallbackLifeSafetyOperation() logs "This feature was
+//     not compiled" at start-up. The callback below is still registered
+//     (harmless, forward-compatible), but the service is left disabled rather
+//     than advertised-and-broken. See TODO.md #2.
 //
 // The device keeps the B-ASC/B-SA objects (three read-only inputs + three
 // commandable outputs + Network Port) and ADDS Life Safety Point 1, Life Safety
@@ -1447,7 +1477,11 @@ int main(int argc, char** argv) {
     BACnetStack_RegisterCallbackReinitializeDevice(ReinitializeDevice);                 // DM-RD-B
     BACnetStack_RegisterCallbackSetSystemTime(SetSystemTime);              // DM-TS-B / DM-UTC-B
     BACnetStack_RegisterCallbackAcknowledgeAlarm(AcknowledgeAlarm);                     // AE-ACK-B
-    BACnetStack_RegisterCallbackLifeSafetyOperation(LifeSafetyOperation);               // AE-LS-B
+    // AE-LS-B: registered for forward-compatibility (see the "not yet enabled"
+    // note where SERVICE_LIFE_SAFETY_OPERATION would otherwise be turned on,
+    // below) - harmless to register even while the underlying service is
+    // compiled out of the linked static library.
+    BACnetStack_RegisterCallbackLifeSafetyOperation(LifeSafetyOperation);
 
     // --- Create the device --------------------------------------------------
     if (!BACnetStack_AddDevice(g_deviceInstance)) {
@@ -1472,7 +1506,21 @@ int main(int argc, char** argv) {
         { SERVICE_GET_EVENT_INFORMATION,         "GetEventInformation (AE-INFO-B)" },
         { SERVICE_CONFIRMED_EVENT_NOTIFICATION,  "ConfirmedEventNotification (AE-LS-B)" },
         { SERVICE_UNCONFIRMED_EVENT_NOTIFICATION,"UnconfirmedEventNotification (AE-LS-B)" },
-        { SERVICE_LIFE_SAFETY_OPERATION,         "LifeSafetyOperation (AE-LS-B)" },
+        // LifeSafetyOperation (service 37) is deliberately NOT in this list - see
+        // TODO.md #2. Confirmed by running the built binary: registering the
+        // callback (above) logs "This feature was not compiled. To enable,
+        // re-compile the CAS BACnet Stack with this defined:
+        // STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION" - that compile option is
+        // NOT part of the STACK_OPTION_TARGET_FULL preset every example in this
+        // series is built with (unlike the Life Safety Point/Zone OBJECT TYPES,
+        // which are), and setting it requires a change to the stack's own
+        // project file, not this example. Advertising the service bit in
+        // Protocol_Services_Supported while the processor cannot execute it
+        // would be a conformance defect worse than simply not claiming it, so
+        // this example leaves the bit off. DM-LSO-B is not itself a BIBB this
+        // profile requires (see the BIBB table above) - only AE-LS-B is, and
+        // AE-LS-B's alarm GENERATION (the ChangeOfLifeSafety/fault algorithms)
+        // is unaffected by this gap.
     };
     for (size_t i = 0; i < sizeof(services) / sizeof(services[0]); ++i) {
         if (!BACnetStack_SetServiceEnabled(g_deviceInstance, services[i].service, true)) {
