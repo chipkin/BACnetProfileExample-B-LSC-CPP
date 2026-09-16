@@ -1,0 +1,235 @@
+{
+  "objects": [
+    {
+      "type": "Device",
+      "instance": 389007,
+      "name": "Rainbow",
+      "app": [
+        "Object_Name",
+        "Description",
+        "Vendor_Name",
+        "Vendor_Identifier",
+        "Model_Name",
+        "Firmware_Revision",
+        "Application_Software_Version"
+      ],
+      "enabled": [
+        "Description"
+      ],
+      "writable": [],
+      "accepted": [
+        "System_Status",
+        "Max_APDU_Length_Accepted",
+        "Segmentation_Supported",
+        "APDU_Timeout",
+        "Number_Of_APDU_Retries",
+        "Database_Revision"
+      ],
+      "note": "the device itself; the instance is configurable with --deviceID. The stack rows are device-wide facts only the stack knows - the protocol version and revision it implements, the services and object types it was configured with, the live object list and address-binding table. The accepted rows are the stack's configured defaults for APDU limits, segmentation, system status and database revision; an application that answered them from its own constants could contradict the stack, so this example does not",
+      "stack": [
+        "Object_List",
+        "Protocol_Version",
+        "Protocol_Revision",
+        "Protocol_Services_Supported",
+        "Protocol_Object_Types_Supported",
+        "Device_Address_Binding"
+      ]
+    },
+    {
+      "type": "Analog Input",
+      "instance": 1,
+      "name": "Bronze",
+      "app": [
+        "Present_Value",
+        "Object_Name",
+        "Units",
+        "Out_Of_Service"
+      ],
+      "enabled": [],
+      "writable": [],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "REAL, degrees Celsius; starts at 21.5. Present_Value is DS-COV-B subscribable (BACnetStack_SetPropertySubscribable); the up/down key feeds subscribers via BACnetStack_UpdateValue"
+    },
+    {
+      "type": "Binary Input",
+      "instance": 1,
+      "name": "Emerald",
+      "app": [
+        "Present_Value",
+        "Object_Name",
+        "Polarity",
+        "Out_Of_Service"
+      ],
+      "enabled": [],
+      "writable": [],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "starts inactive"
+    },
+    {
+      "type": "Multi-state Input",
+      "instance": 1,
+      "name": "Hot Pink",
+      "app": [
+        "Present_Value",
+        "Object_Name",
+        "Number_Of_States",
+        "Out_Of_Service",
+        "State_Text"
+      ],
+      "enabled": [
+        "State_Text"
+      ],
+      "writable": [],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "state 1 of 3: On, Off, Auto"
+    },
+    {
+      "type": "Analog Output",
+      "instance": 1,
+      "name": "Chartreuse",
+      "app": [
+        "Object_Name",
+        "Units",
+        "Out_Of_Service",
+        "Relinquish_Default"
+      ],
+      "enabled": [],
+      "writable": [
+        "Present_Value"
+      ],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "F-OUTPUTS (canonical: B-SA). commandable; 16-slot Priority_Array, Relinquish_Default 20.0 C, served by GetPropertyReal. Present_Value, Priority_Array and Current_Command_Priority are resolved by the stack from the priority array"
+    },
+    {
+      "type": "Binary Output",
+      "instance": 1,
+      "name": "Fuchsia",
+      "app": [
+        "Object_Name",
+        "Polarity",
+        "Out_Of_Service",
+        "Relinquish_Default"
+      ],
+      "enabled": [],
+      "writable": [
+        "Present_Value"
+      ],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "F-OUTPUTS. commandable; 16-slot Priority_Array, Relinquish_Default inactive, served by GetPropertyEnumerated"
+    },
+    {
+      "type": "Multi-state Output",
+      "instance": 1,
+      "name": "Indigo",
+      "app": [
+        "Object_Name",
+        "Number_Of_States",
+        "Out_Of_Service",
+        "Relinquish_Default"
+      ],
+      "enabled": [],
+      "writable": [
+        "Present_Value"
+      ],
+      "accepted": [
+        "Event_State"
+      ],
+      "note": "F-OUTPUTS. commandable; 16-slot Priority_Array, Relinquish_Default state 1 of 3, served by GetPropertyUnsignedInteger"
+    },
+    {
+      "type": "Life Safety Point",
+      "instance": 1,
+      "name": "Amber",
+      "app": [
+        "Object_Name",
+        "Present_Value",
+        "Tracking_Value",
+        "Reliability",
+        "Out_Of_Service",
+        "Mode",
+        "Silenced",
+        "Operation_Expected"
+      ],
+      "enabled": [],
+      "writable": [
+        "Present_Value",
+        "Mode"
+      ],
+      "accepted": [
+        "Accepted_Modes",
+        "Event_State"
+      ],
+      "note": "VERIFIED CRITICAL GAP (TODO.md #0): almost every property on this object currently answers unknown-object over the wire, because BACnetStack_AddObject never populates the stack internal life-safety engine object (AddLifeSafetyPointObject/AddLifeSafetyZoneObject are not customer-exported) - see chipkin/cas-bacnet-stack#2036. F-LIFESAFETY / F-ALARM-LS (canonical: B-LSC). BACnetLifeSafetyState Present_Value: quiet(0)/alarm(2)/fault(3); Tracking_Value mirrors it (this example's simplification - see main.cpp file header for why it does not use the stack's internal, non-customer-exported life-safety engine). Present_Value is made WRITABLE beyond the profile's read-only column purely as this tutorial's alarm/fault trigger (mirrors B-AAC's Diamond). Mode is required-writable by the profile and accepted unconditionally (no customer-facing Accepted_Modes setter exists - see the file header); Accepted_Modes is therefore accepted at the stack's generic default. Event_State is NOT actually a stack default here - it is genuinely computed, because this example arms ChangeOfLifeSafety + fault intrinsic algorithms on Amber (SetIntrinsicChangeOfLifeSafetyAlgorithm/SetFaultLifeSafetyAlgorithm); it is marked accepted only because property-profile-reference.md's generic table does not know an algorithm was armed (same convention as B-AAC's Diamond). Present_Value is also DS-COV-B subscribable"
+    },
+    {
+      "type": "Life Safety Zone",
+      "instance": 1,
+      "name": "Azure",
+      "app": [
+        "Object_Name",
+        "Present_Value",
+        "Tracking_Value",
+        "Reliability",
+        "Out_Of_Service",
+        "Mode",
+        "Silenced",
+        "Operation_Expected"
+      ],
+      "enabled": [],
+      "writable": [
+        "Present_Value",
+        "Mode"
+      ],
+      "accepted": [
+        "Accepted_Modes",
+        "Zone_Members",
+        "Event_State"
+      ],
+      "note": "VERIFIED CRITICAL GAP (TODO.md #0): almost every property on this object currently answers unknown-object over the wire, because BACnetStack_AddObject never populates the stack internal life-safety engine object (AddLifeSafetyPointObject/AddLifeSafetyZoneObject are not customer-exported) - see chipkin/cas-bacnet-stack#2036. F-LIFESAFETY / F-ALARM-LS. Event_State is genuinely computed (same as Amber's - ChangeOfLifeSafety + fault algorithms armed on Azure too), marked accepted for the same generator-limitation reason. Same shape as Amber (this example holds Azure's own independent Present_Value rather than rolling it up from Zone_Members - the stack's real zone roll-up engine is not customer-exported, see the file header). Zone_Members (cl. 12.16, required, BACnetLIST of BACnetDeviceObjectReference) has NO servable path on the customer surface: the only generic constructed-property callback, BACnetStack_RegisterCallbackGetPropertyConstructed, was moved to the test-tool DLL (CASBACnetStackDLL.h's own PR #193 review comment) and is forbidden by this series. See TODO.md and the filed stack issue - this is a real, verified gap, not a convenience shortcut"
+    },
+    {
+      "type": "Notification Class",
+      "instance": 1,
+      "name": "Crimson",
+      "app": [
+        "Object_Name"
+      ],
+      "enabled": [],
+      "writable": [],
+      "accepted": [
+        "Priority",
+        "Ack_Required",
+        "Recipient_List"
+      ],
+      "note": "Priority, Ack_Required and Recipient_List are NOT stack DEFAULTS - they are genuinely populated, by BACnetStack_AddNotificationClassObject (Priority, Ack_Required) and BACnetStack_AddRecipientToNotificationClass (Recipient_List) at start-up. They are marked accepted only because property-profile-reference.md's generic per-type table does not know about this object-specific host-configuration API and so cannot credit them as stack-served. Routes Amber's and Azure's CHANGE_OF_LIFE_SAFETY / fault notifications"
+    },
+    {
+      "type": "Network Port",
+      "instance": 1,
+      "name": "Vermilion",
+      "app": [
+        "Object_Name",
+        "Out_Of_Service",
+        "Network_Type",
+        "Protocol_Level",
+        "Changes_Pending"
+      ],
+      "enabled": [],
+      "writable": [],
+      "accepted": [
+        "Reliability"
+      ],
+      "note": "BACnet/IP; Network_Type and Protocol_Level are set from BACnetStack_AddNetworkPortObject()'s arguments (IPv4, BACnet Application) at start-up, not a GetProperty callback like the object's other app-served rows; Changes_Pending is likewise computed and answered natively by the stack's Network Port object. Reliability has no fault condition this example detects, so it is accepted at the generic default (normal)"
+    }
+  ]
+}
