@@ -202,7 +202,20 @@ static uint32_t g_deviceInstance = 389007;
 // by ASHRAE - request one (free) at https://bacnet.org/assigned-vendor-ids/.
 // Update VENDOR_NAME below to match.
 static const uint32_t VENDOR_IDENTIFIER = 389;
+
+// Your device's Object_Name. MUST BE UNIQUE ACROSS THE BACNET INTERNETWORK -
+// this is the one that will bite you. The device INSTANCE is runtime-
+// configurable via --deviceID (see g_deviceInstance above), but DEVICE_NAME is
+// a compile-time constant: ship two units and configure their instances
+// correctly, and both still announce Object_Name "Rainbow" - a spec violation
+// on the wire, not just a documentation nit. In a real product, Object_Name
+// must be made per-unit configurable too - a serial number, DIP switches, a
+// config file, or a --deviceName command-line argument, the same way
+// --deviceID makes the instance configurable here.
 static const char* DEVICE_NAME = "Rainbow";
+
+// What your device actually is - replace this tutorial description with your
+// product's own.
 static const char* DEVICE_DESCRIPTION =
     "Chipkin CAS BACnet Stack example - B-LSC (Life Safety Controller) profile. "
     "Demonstrates DS-RP/RPM/WP/WPM-B, DS-COV-B, life-safety intrinsic alarming "
@@ -210,6 +223,9 @@ static const char* DEVICE_DESCRIPTION =
     "and time synchronisation.";
 
 // Device identity strings (read by clients, and used to populate I-Am).
+// VENDOR_NAME must match VENDOR_IDENTIFIER above - your company name, not
+// Chipkin's. MODEL_NAME is your model designation - what a building operator
+// reads on a real job site to identify your device, not a tutorial label.
 static const char* VENDOR_NAME = "Chipkin Automation Systems";
 static const char* MODEL_NAME = "CAS BACnet Stack Example - B-LSC";
 
@@ -218,6 +234,10 @@ static const char* MODEL_NAME = "CAS BACnet Stack Example - B-LSC";
 // accepts the command only if it matches. Set to NULL/empty to accept any request
 // (no password required). Change this to your device's secret before shipping.
 static const char* DCC_PASSWORD = "";  // "" = no password required
+
+// Your real firmware/application versions - wire these to your actual build
+// (a build-generated header, CI-injected define, etc.), not a hand-maintained
+// literal that silently drifts from what you actually shipped.
 static const char* FIRMWARE_REVISION = "1.0.0";
 static const char* APPLICATION_SOFTWARE_VERSION = "1.0.0";
 

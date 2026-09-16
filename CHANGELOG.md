@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Documentation restructured** to match the rest of the example series:
+  `README.md` is cut down to what this example is and how to build/run it;
+  long-form extension/review material moved to a new `TUTORIAL.md`; a new
+  `docs/PICS.md` holds the Protocol Implementation Conformance Statement
+  (ANSI/ASHRAE 135 Annex A shape), with its objects-and-properties section
+  generated from `docs/objects.json`, which now includes the Device object
+  (previously omitted). `AGENTS.md` updated to match the new file layout and
+  build section.
+- **Build switched from a prebuilt STATIC library to the adapter's default
+  SOURCE mode**: `cmake -B build -S .` / `cmake --build build --config
+  Release` now compiles the stack's `source/*.cpp` straight into the
+  executable - no `tools/build-stack-static.sh` pre-step, no
+  `-DCAS_BACNET_STACK_LINK=STATIC` flag. `.github/workflows/release.yml`
+  drops the static-library cache/build steps and matrix `lib:` entries,
+  asserts `CAS_BACNET_STACK_LINK` is `SOURCE`, records `"link_mode":
+  "SOURCE"` in the published metrics JSON, and packages `TUTORIAL.md` and
+  `docs/PICS.md` alongside the binary. This is a build-tooling change only;
+  `main.cpp` and `common/` are identical regardless of link mode.
+- The **⚠ CRITICAL Life Safety Point/Zone limitation**
+  ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036))
+  is now documented prominently in `README.md`, `TUTORIAL.md`, and
+  `docs/PICS.md` (previously only in `README.md` and `TODO.md`), including in
+  `docs/PICS.md`'s "standard object types supported" table, which now marks
+  Life Safety Point/Zone as configured-but-non-functional with a reference to
+  the issue, rather than listing them as working.
+
 ## [1.0.0] - unreleased
 
 ### Added
@@ -61,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **⚠ CRITICAL: Life Safety Point 1 (Amber) and Life Safety Zone 1 (Azure)
   cannot serve almost any property.** Verified by running the built binary
-  against a live `bacpypes3` client: `Object_List`/`Object_Identifier`/
+  against a live BACnet client: `Object_List`/`Object_Identifier`/
   `Object_Type` are correct, but `Object_Name`, `Present_Value`,
   `Out_Of_Service`, and the WriteProperty this repo's own alarm/fault demo
   relies on all answer `unknown-object`. Root cause is in the stack

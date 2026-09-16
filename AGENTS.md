@@ -12,9 +12,15 @@ customer-facing API supports. It is one of a series - one git repo per BACnet
 profile - seeded from B-AAC (Advanced Application Controller) minus its
 Schedule/Calendar objects, and adds **intrinsic life-safety alarming** (AE-LS-B /
 AE-ACK-B / AE-INFO-B), **LifeSafetyOperation** (silence/reset), and **DS-COV-B**.
-What B-LSC requires but the stack's customer surface cannot yet do (Life Safety
-Zone's `Zone_Members`) is documented in [TODO.md](TODO.md) - keep that file
-honest and current. The top priority is that the code reads like a tutorial a
+**Life Safety Point/Zone objects (Amber, Azure) are configured but cannot
+currently serve almost any property over the wire** - a verified stack
+defect, not an application bug; see the callout in [README.md](README.md),
+[TODO.md #0](TODO.md), and
+[chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036).
+Everything else B-LSC requires but the stack's customer surface cannot yet do
+(Life Safety Zone's `Zone_Members`, LifeSafetyOperation not being enabled on
+the linked build) is documented in [TODO.md](TODO.md) - keep that file honest
+and current. The top priority is that the code reads like a tutorial a
 customer can learn from and copy-paste. Favour clarity over cleverness.
 
 ## Layout
@@ -23,26 +29,45 @@ This repository is self-contained:
 
 - `main.cpp` - the example device.
 - `common/` - the shared helper (vendored).
+- `README.md` - what this example is. Keep it short and about THIS example
+  only.
+- `TUTORIAL.md` - how to extend and review the example. Long-form material
+  that would bloat the README belongs here.
+- `docs/PICS.md` - the Protocol Implementation Conformance Statement. Its
+  objects-and-properties section is GENERATED from `docs/objects.json`; do
+  not hand-edit between the `OBJECTS-PROPERTIES` markers.
+- `docs/objects.json` - the input to that generator. Update it in the same
+  change as any `main.cpp` change that adds an object or a `GetProperty*`
+  branch.
+- `TODO.md` - what B-LSC requires that the stack's customer-facing API cannot
+  yet do, with source-level traces and the filed stack issue
+  ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)).
+  Keep it honest and current.
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack** as a git submodule
   (private; compiled from source). After cloning, run
   `git submodule update --init --recursive`.
 
+The `PROFILE-TABLE` block in README.md is also generated, from the
+example-series repository's `docs/profile-table.md`. Edit it there, not here.
+
 ## Build
 
-This example links the CAS BACnet Stack as a prebuilt **STATIC** library (the
-only mode it ships in - see the README's "Link mode" section):
+Plain CMake, identical on every platform, in the adapter's default SOURCE
+mode (the stack's sources are compiled into the executable - no prebuilt
+library, no DLL, no per-platform pre-step):
 
 ```bash
 git submodule update --init --recursive   # once, if not cloned with --recursive
-tools/build-stack-static.sh BACnetProfileExample-B-LSC-CPP   # from the series root
-cmake -B build -S . -DCAS_BACNET_STACK_LINK=STATIC
+cmake -B build -S .
 cmake --build build --config Release
 ```
 
-The stack library build takes a few minutes the first time - it compiles the
-whole stack (~600 files) once, via the stack's own project files; the example
-itself then builds in seconds against that library. Use `-D CAS_STACK_DIR=...`
-only if your stack lives outside the bundled submodule.
+The first build compiles the whole stack (~600 files) and takes a few
+minutes; rebuilds after that are incremental and fast. Use
+`-D CAS_STACK_DIR=...` only if your stack lives outside the bundled
+submodule. Do not reintroduce a link-mode flag or a series-root build script
+into the documented build: a customer downloads this repository on its own
+and must be able to build it with the two commands above.
 
 ## Run
 
@@ -118,18 +143,29 @@ There are no unit tests; verification is behavioural:
    it (and its `Priority_Array`), then write NULL to relinquish and confirm it
    falls back to `Relinquish_Default`. Confirm a write to a read-only input is
    rejected.
-5. **Life-safety alarming**: WriteProperty Life Safety Point 1 "Amber"
-   `Present_Value` to `2` (alarm); confirm `Event_State` goes to
+5. **Life-safety alarming** - **currently blocked by
+   [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)**,
+   see [TODO.md #0](TODO.md). Once the stack exports the missing
+   `Add*LifeSafety*Object` functions: WriteProperty Life Safety Point 1
+   "Amber" `Present_Value` to `2` (alarm); confirm `Event_State` goes to
    `life-safety-alarm` and a `CHANGE_OF_LIFE_SAFETY` EventNotification is sent;
    write `0` and confirm it returns to normal. Repeat with `3` (fault) and the
    fault algorithm. AcknowledgeAlarm and GetEventInformation both respond.
-6. **LifeSafetyOperation**: send `silence`; confirm `Silenced` reflects it. Latch
-   an alarm, send `reset-alarm`, confirm `Present_Value` returns to quiet.
+6. **LifeSafetyOperation**: not enabled on the linked stack build (see
+   [TODO.md #2](TODO.md)); a request is expected to answer
+   `unrecognized-service` rather than being executed.
 7. **DS-COV-B**: SubscribeCOV to Bronze's or Amber's `Present_Value`; change it
    (up/down key, or a WriteProperty) and confirm a COV notification arrives.
 8. **Device management**: ReinitializeDevice COLDSTART SimpleACKs, then the
    process actually restarts and re-announces with an I-Am; DCC
    `disable-initiation`/`enable` SimpleACK; TimeSynchronization accepted.
+9. If you changed the objects or their properties, regenerate
+   `docs/PICS.md` (`python tools/gen-objects-properties.py
+   BACnetProfileExample-B-LSC-CPP` from the series root) and confirm no row
+   comes out flagged with ⚠ (a ⚠ means no callback exists in `main.cpp` for a
+   required property - a different, generator-detectable defect from the
+   Life Safety Point/Zone wire-level gap above, which the generator cannot
+   see because the callbacks do exist in source).
 
 Verification is manual (no in-repo test suite ships).
 
@@ -140,6 +176,5 @@ then tag `vX.Y.Z`. The GitHub Actions workflow builds and publishes the release.
 
 ## License
 
-The example source code is dedicated to the public domain under
-[CC0-1.0](LICENSE). The CAS BACnet Stack is a separate, commercially licensed
-product and is not covered by that dedication.
+See [LICENSE](LICENSE). The CAS BACnet Stack is a separate, commercially
+licensed product and is not covered by it.

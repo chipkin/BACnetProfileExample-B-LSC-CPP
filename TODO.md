@@ -191,12 +191,12 @@ does NOT extend to this particular SERVICE. (This is also moot in practice
 until item 0 above is fixed - a LifeSafetyOperation request names an object
 that, today, cannot serve `Present_Value`/`Silenced` either way.)
 
-Setting that define requires editing `CASBACnetStackOptions.h` (or the
-`CASBACnetStack.vcxproj` preprocessor definitions) inside the `cas-bacnet-stack`
-submodule itself - out of scope for this repository (the vendored stack is not
-this example's to edit) and out of scope for `tools/build-stack-static.sh`
-(series-wide tooling shared by every example, not owned by this task per the
-runbook's "touch ONLY BACnetProfileExample-B-LSC-CPP" instruction).
+Setting that define requires editing `CASBACnetStackOptions.h` (or the CMake
+adapter's own preprocessor definitions, `submodules/cas-bacnet-stack/adapters/cpp/CMakeLists.txt`)
+inside the `cas-bacnet-stack` submodule itself - out of scope for this
+repository (the vendored stack is not this example's to edit, and this is
+series-wide tooling, not owned by this task per the runbook's "touch ONLY
+BACnetProfileExample-B-LSC-CPP" instruction).
 
 Rather than advertise `Protocol_Services_Supported` bit 37 while the request
 processor cannot execute it (a conformance defect worse than not claiming the
@@ -204,10 +204,11 @@ bit at all), this example leaves the service **disabled**. DM-LSO-B is not
 itself a BIBB the B-LSC profile requires (see the BIBB table in `README.md`) -
 only AE-LS-B is.
 
-**To do when available:** if a future series-wide static-library build defines
-`STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (a `tools/build-stack-static.sh`
-change, decided series-wide), this example's `main.cpp` needs **zero changes**
-beyond adding `SERVICE_LIFE_SAFETY_OPERATION` back to the enabled-services
-list, because the callback is already registered and implemented.
+**To do when available:** if a future series-wide build defines
+`STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (a change to the stack's own CMake
+adapter or `CASBACnetStackOptions.h`, decided series-wide), this example's
+`main.cpp` needs **zero changes** beyond adding `SERVICE_LIFE_SAFETY_OPERATION`
+back to the enabled-services list, because the callback is already registered
+and implemented.
 
 **Stack/tooling issue:** fold into the item 0 issue above; not wave-stopping.
