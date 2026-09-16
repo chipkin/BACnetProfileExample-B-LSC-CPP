@@ -91,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **⚠ CRITICAL: Life Safety Point 1 (Amber) and Life Safety Zone 1 (Azure)
   cannot serve almost any property.** Verified by running the built binary
-  against a live `bacpypes3` client: `Object_List`/`Object_Identifier`/
+  against a live BACnet client: `Object_List`/`Object_Identifier`/
   `Object_Type` are correct, but `Object_Name`, `Present_Value`,
   `Out_Of_Service`, and the WriteProperty this repo's own alarm/fault demo
   relies on all answer `unknown-object`. Root cause is in the stack
