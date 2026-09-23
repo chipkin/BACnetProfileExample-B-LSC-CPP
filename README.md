@@ -56,7 +56,7 @@ adds the two life-safety object types plus a LifeSafetyOperation responder.
 ## The device this example creates
 
 ```
-Device 389007  "Rainbow"   (Vendor 389 - Chipkin Automation Systems)
+Device 389007  "Chipkin Example B-LSC"   (Vendor 389 - Chipkin Automation Systems)
     ├── Analog Input  1       "Bronze"      read-only sensor (REAL, deg C); COV-subscribable
     ├── Binary Input  1       "Emerald"     read-only sensor (active/inactive)
     ├── Multi-State Input 1   "Hot Pink"    read-only sensor (state 1..3)
@@ -116,7 +116,7 @@ the wire because of the stack defect above.
 
 | Object type | Instance | Name |
 |-------------|:--------:|------|
-| Device | 389007 | Rainbow |
+| Device | 389007 | Chipkin Example B-LSC |
 | Analog Input | 1 | Bronze |
 | Binary Input | 1 | Emerald |
 | Multi-State Input | 1 | Hot Pink |
@@ -224,7 +224,7 @@ FYI: Listening for BACnet/IP on UDP port 47808 (Network Port 1).
 ::CASBACnetStack::BACnetInterface::RegisterCallbackLifeSafetyOperation() ... - FYI: This feature was not compiled. To enable, re-compile the CAS BACnet Stack with this defined: STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION
 TX 21 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1)
 TX 8 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1)
-FYI: Device 389007 ("Rainbow") ready. Vendor ID 389. Press 'h' for help.
+FYI: Device 389007 ("Chipkin Example B-LSC") ready. Vendor ID 389. Press 'h' for help.
 ```
 
 The first `TX` line is the start-up I-Am the device broadcasts to announce

@@ -92,7 +92,7 @@
 // Zone 1, and the Notification Class that routes their alarms. Each object has a
 // colour name (the convention shared across this example series):
 //
-//     Device 389007            "Rainbow"     (instance configurable with --deviceID)
+//     Device 389007            "Chipkin Example B-LSC"     (instance configurable with --deviceID)
 //     Analog Input  1          "Bronze"      (REAL, degrees Celsius; read-only)
 //     Binary Input  1          "Emerald"     (active / inactive; read-only)
 //     Multi-State Input 1      "Hot Pink"    (state 1..3; read-only)
@@ -183,7 +183,7 @@ using namespace CASBACnetStackExampleConstants;
 // 1. Example + device configuration
 // -----------------------------------------------------------------------------
 static const char* APP_NAME = "BACnet B-LSC (Life Safety Controller) Example - C++";
-static const char* APP_VERSION = "1.0.1";
+static const char* APP_VERSION = "1.0.2";
 
 // The device instance. BACnet requires this to be configurable, so it defaults
 // to 389007 (docs/colour-table.md) and can be overridden on the command line
@@ -208,12 +208,12 @@ static const uint32_t VENDOR_IDENTIFIER = 389;
 // this is the one that will bite you. The device INSTANCE is runtime-
 // configurable via --deviceID (see g_deviceInstance above), but DEVICE_NAME is
 // a compile-time constant: ship two units and configure their instances
-// correctly, and both still announce Object_Name "Rainbow" - a spec violation
+// correctly, and both still announce Object_Name "Chipkin Example B-LSC" - a spec violation
 // on the wire, not just a documentation nit. In a real product, Object_Name
 // must be made per-unit configurable too - a serial number, DIP switches, a
 // config file, or a --deviceName command-line argument, the same way
 // --deviceID makes the instance configurable here.
-static const char* DEVICE_NAME = "Rainbow";
+static const char* DEVICE_NAME = "Chipkin Example B-LSC";
 
 // What your device actually is - replace this tutorial description with your
 // product's own.

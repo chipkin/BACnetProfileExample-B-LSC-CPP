@@ -81,7 +81,7 @@ Interactive keys while running: `h` help, `q` quit, up/down nudge Analog Input 1
 
 ## Conventions
 
-- Device is named "Rainbow"; objects use the series' colour names; vendor id 389.
+- Device is named "Chipkin Example B-LSC"; objects use the series' colour names; vendor id 389.
 - Implement the B-LSC services the stack supports; expose **every required
   property** of each object for Protocol_Revision 24. Anything B-LSC requires that
   is NOT implemented must be listed in [TODO.md](TODO.md) and the README.
