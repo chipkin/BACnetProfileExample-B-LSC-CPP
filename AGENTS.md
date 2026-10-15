@@ -12,15 +12,12 @@ customer-facing API supports. It is one of a series - one git repo per BACnet
 profile - seeded from B-AAC (Advanced Application Controller) minus its
 Schedule/Calendar objects, and adds **intrinsic life-safety alarming** (AE-LS-B /
 AE-ACK-B / AE-INFO-B), **LifeSafetyOperation** (silence/reset), and **DS-COV-B**.
-**Life Safety Point/Zone objects (Amber, Azure) are configured but cannot
-currently serve almost any property over the wire** - a verified stack
-defect, not an application bug; see the callout in [README.md](README.md),
-[TODO.md #0](TODO.md), and
-[chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036).
-Everything else B-LSC requires but the stack's customer surface cannot yet do
-(Life Safety Zone's `Zone_Members`, LifeSafetyOperation not being enabled on
-the linked build) is documented in [TODO.md](TODO.md) - keep that file honest
-and current. The top priority is that the code reads like a tutorial a
+At stack `64b2cfac5` Life Safety Point/Zone (Amber, Azure) serve every listed
+property and their intrinsic alarms work (the `unknown-object` defect of earlier
+pins is fixed by stack #2187). What B-LSC requires but this example still cannot
+do (LifeSafetyOperation is not compiled into the default stack build; Zone's
+`Zone_Members` cannot be set, [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036))
+is documented in [TODO.md](TODO.md) - keep that file honest and current. The top priority is that the code reads like a tutorial a
 customer can learn from and copy-paste. Favour clarity over cleverness.
 
 ## Layout
@@ -39,10 +36,10 @@ This repository is self-contained:
 - `docs/objects.json` - the input to that generator. Update it in the same
   change as any `main.cpp` change that adds an object or a `GetProperty*`
   branch.
-- `TODO.md` - what B-LSC requires that the stack's customer-facing API cannot
-  yet do, with source-level traces and the filed stack issue
-  ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)).
+- `TODO.md` - what B-LSC requires that this example cannot yet do, and why.
   Keep it honest and current.
+- `tests/` + `wiretest/` - the discovery Wire Test and the series' shared
+  harness (vendored).
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack** as a git submodule
   (private; compiled from source). After cloning, run
   `git submodule update --init --recursive`.
@@ -83,7 +80,7 @@ Interactive keys while running: `h` help, `q` quit, up/down nudge Analog Input 1
 
 - Device is named "Chipkin Example B-LSC"; objects use the series' colour names; vendor id 389.
 - Implement the B-LSC services the stack supports; expose **every required
-  property** of each object for Protocol_Revision 24. Anything B-LSC requires that
+  property** of each object for Protocol_Revision 30. Anything B-LSC requires that
   is NOT implemented must be listed in [TODO.md](TODO.md) and the README.
 - **Life Safety Point/Zone objects use the SAME generic pattern as every other
   object in this series** - `BACnetStack_AddObject` + this file's own Get/Set
@@ -138,19 +135,18 @@ There are no unit tests; verification is behavioural:
 2. With a BACnet client (e.g. the CAS BACnet Explorer, or `bacpypes3`/`BAC0`),
    send **Who-Is** and confirm **I-Am** from the device instance.
 3. **ReadProperty** every required property of every object and confirm the
-   values; confirm `Protocol_Revision` is 24 and `Object_List` lists all objects.
+   values; confirm `Protocol_Revision` is 30 and `Object_List` lists all objects.
+   `python3 tests/run_wire_tests.py --exe build/BACnetExampleBLSC` automates this.
 4. **WriteProperty** a commandable output's `Present_Value` at a priority, re-read
    it (and its `Priority_Array`), then write NULL to relinquish and confirm it
    falls back to `Relinquish_Default`. Confirm a write to a read-only input is
    rejected.
-5. **Life-safety alarming** - **currently blocked by
-   [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)**,
-   see [TODO.md #0](TODO.md). Once the stack exports the missing
-   `Add*LifeSafety*Object` functions: WriteProperty Life Safety Point 1
-   "Amber" `Present_Value` to `2` (alarm); confirm `Event_State` goes to
+5. **Life-safety alarming** - WriteProperty Life Safety Point 1 "Amber"
+   `Present_Value` to `2` (alarm); confirm `Event_State` goes to
    `life-safety-alarm` and a `CHANGE_OF_LIFE_SAFETY` EventNotification is sent;
    write `0` and confirm it returns to normal. Repeat with `3` (fault) and the
-   fault algorithm. AcknowledgeAlarm and GetEventInformation both respond.
+   fault algorithm. (All four checked at `64b2cfac5`.) AcknowledgeAlarm and
+   GetEventInformation should both respond; not yet checked at this pin.
 6. **LifeSafetyOperation**: not enabled on the linked stack build (see
    [TODO.md #2](TODO.md)); a request is expected to answer
    `unrecognized-service` rather than being executed.

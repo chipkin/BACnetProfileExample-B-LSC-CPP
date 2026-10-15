@@ -63,18 +63,11 @@ what turns a plain writable Life Safety Point into an alarm source, and it is
 why `Event_State` moves from "defaulted by coincidence" to "genuinely
 computed" the moment you copy this pattern to a new alarming object.
 
-**This table describes what `main.cpp` is coded to do - not what a client
-sees on the wire today.** Because of the stack defect this README documents
-prominently ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)),
-every row above except `Object_Identifier`/`Object_Type` currently answers
-`unknown-object` when you actually query Amber or Azure - the stack's
-generated-property dispatch for these two object types requires an internal
-engine object that `BACnetStack_AddObject` never creates, and it bails before
-reaching any of the callbacks in this table. See
-[docs/PICS.md](docs/PICS.md) and [TODO.md](TODO.md#0-critical-life-safetypointzone-objects-cannot-serve-almost-any-property-via-the-customer-surface)
-for the full trace. The table above is still correct as a map of the *code*,
-and is exactly what starts working the day the stack exports the missing
-`Add*` functions.
+At stack `6.x` @ `64b2cfac5` a client sees what this table describes: every
+row reads over the wire. (Up to stack `abd4cee1` every row except
+`Object_Identifier`/`Object_Type` answered `unknown-object`, because the stack's
+dispatch for these two object types bailed before reaching the callbacks; stack
+#2187 made it fall through to them.)
 
 For every other object type in this example (Analog/Binary/Multi-State Input,
 the three commandable Outputs, Notification Class, Network Port), the
@@ -144,16 +137,13 @@ rather than against "it looked fine in the explorer":
    (see [Keeping the PICS honest](#keeping-the-pics-honest) below).
 2. Read **every** property listed for **every** object with a BACnet client,
    and compare the value against the PICS. `"undefined"`, `no-units` and `0`
-   are the three shapes a missed callback takes - except on Life Safety
-   Point/Zone, where every property currently answers `unknown-object`
-   regardless of what `main.cpp` does (see the callout in
-   [docs/PICS.md](docs/PICS.md) - that is the known stack defect, not
-   something to "fix" here).
+   are the three shapes a missed callback takes. `tests/run_wire_tests.py`
+   reads every listed property and fails on any that does not return a
+   value - keep it passing, then check the values yourself.
 3. Diff a new object of a type against the existing one of that type.
    Anything that differs and shouldn't is a callback that matched on
    instance.
-4. Fire a life-safety alarm (once #2036 is resolved, or against a patched
-   stack): WriteProperty Amber's or Azure's `Present_Value` to `2` (alarm),
+4. Fire a life-safety alarm: WriteProperty Amber's or Azure's `Present_Value` to `2` (alarm),
    confirm `Event_State` -> `life-safety-alarm` and a `CHANGE_OF_LIFE_SAFETY`
    `EventNotification` arrives at the recipient; write `3` for fault; write
    `0` to clear. Send `AcknowledgeAlarm` and `GetEventInformation` and confirm
@@ -198,8 +188,7 @@ exists in the source).
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| ReadProperty of Amber's/Azure's `Object_Name`, `Present_Value`, or almost anything but `Object_Identifier`/`Object_Type` returns `Error(...): object: unknown-object` | **Expected, and not your bug.** This is [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036) - see the callout in [docs/PICS.md](docs/PICS.md) and [TODO.md #0](TODO.md). |
-| WriteProperty of Amber's/Azure's `Present_Value` (the alarm/fault demo trigger) fails the same way | Same root cause as above - the stack's Life Safety engine dispatch, not this example's `SetProperty*` callback. |
+| ReadProperty of Amber's/Azure's `Object_Name`, `Present_Value`, or almost anything but `Object_Identifier`/`Object_Type` returns `Error(...): object: unknown-object` | You are on a stack older than `6.x` @ `64b2cfac5`. Up to `abd4cee1` the stack answered this for every Life Safety Point/Zone property (fixed by stack #2187). Move the Stack Pin forward. |
 | LifeSafetyOperation requests get `unrecognized-service` | Expected - the linked stack build was not compiled with `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`. See [TODO.md #2](TODO.md). |
 | On start-up the app prints a wall of red `Error:` lines but the device works | **Expected - this is not your bug.** Two benign sources, both from the stack's own debug logging: (1) the device receives its **own** broadcast I-Am and logs a decode cascade - any BACnet/IP device that listens for broadcasts hears itself; (2) a one-time *"UUID has not been set. A UUID must be set for the BACnetSC device to start."* - the stack starts a BACnet/SC datalink these IP-only examples never configure. |
 | CMake error: *"CAS BACnet Stack adapter not found under: ..."* | Submodules not initialized. Run `git submodule update --init --recursive` (or pass `-D CAS_STACK_DIR=...`). |

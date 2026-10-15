@@ -7,13 +7,11 @@ supports today, in C++. It answers **ReadProperty / ReadPropertyMultiple**,
 accepts **WriteProperty / WritePropertyMultiple**, accepts **SubscribeCOV**,
 generates **intrinsic life-safety alarms** (`CHANGE_OF_LIFE_SAFETY` event
 notifications), accepts **AcknowledgeAlarm** and **GetEventInformation**,
-synchronises its clock, and handles **DeviceCommunicationControl** and
+accepts time synchronisation, and handles **DeviceCommunicationControl** and
 **ReinitializeDevice**.
 
-**This example is not yet released** - it lives on the `implement-lsc`
-branch, blocked on a stack defect (see the callout below). There is no
-`releases` page with prebuilt binaries yet; clone this repository and
-[build it yourself](#build).
+**This example is not yet released.** There is no `releases` page with
+prebuilt binaries yet; clone this repository and [build it yourself](#build).
 
 - **[TUTORIAL.md](TUTORIAL.md)** - how to extend this example and how to
   review it for conformance. Read it when you start turning this into your
@@ -21,32 +19,31 @@ branch, blocked on a stack defect (see the callout below). There is no
 - **[docs/PICS.md](docs/PICS.md)** - the Protocol Implementation Conformance
   Statement: every object, every property, and who answers it.
 
-> **Versions:** this document describes **example v1.0.0**, built and
-> verified against the **CAS BACnet Stack** compiled from source
-> (`submodules/cas-bacnet-stack` @ `abd4cee1`, reporting **6.0.21**), at
-> **Protocol_Revision 24**, with the vendored `common/` helper at **v2.5.0**.
+> **Versions:** this document describes **example v1.1.0**, built and
+> verified against the **CAS BACnet Stack** (`submodules/cas-bacnet-stack` @
+> `64b2cfac5`, reporting **6.0.23**), at **Protocol_Revision 30**, with the
+> vendored `common/` helper at **v3.3.0**.
 > Running the example prints all three - if what it prints disagrees with
 > this line, trust the program and check `CHANGELOG.md`.
 
-> **⚠ CRITICAL, VERIFIED LIMITATION: Life Safety Point/Zone objects (Amber,
-> Azure) currently cannot serve almost any property over the wire.** Confirmed
-> by running the built binary against a live BACnet client: `Object_List`
-> correctly lists both objects and `Object_Identifier`/`Object_Type` read
-> back, but `Object_Name`, `Present_Value`, `Out_Of_Service`, and every other
-> property answer `Error(...): object: unknown-object` - and the same
-> WriteProperty of `Present_Value` this README uses as the alarm/fault demo
-> trigger fails the same way. **Root cause is in the stack, not this
-> example's code:** `BACnetStack_AddObject` (the only customer-facing way to
-> create one of these two object types) never populates the stack's internal
-> life-safety engine object, so the stack's own generated-property dispatch
-> answers `unknown-object` before this example's callbacks are ever reached.
-> See **[TODO.md #0](TODO.md)** for the full trace (it names the exact source
-> lines) and the filed stack issue
-> ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)).
-> This example implements every B-LSC capability the standard CAS BACnet
-> Stack's customer-facing API exposes, and this is the dominant thing it
-> cannot do today - full detail in **[TODO.md](TODO.md)**,
-> **[TUTORIAL.md](TUTORIAL.md)**, and **[docs/PICS.md](docs/PICS.md)**.
+> **Status at stack `6.x` @ `64b2cfac5`** (checked over the wire 2026-10-15):
+> Life Safety Point 1 "Amber" and Life Safety Zone 1 "Azure" now serve every
+> property they list (stack #2187 fixed the `unknown-object` answers earlier
+> pins gave), and a WriteProperty of `Present_Value` drives the intrinsic
+> algorithms: alarm `2` -> `Event_State` life-safety-alarm, fault `3` -> fault,
+> quiet `0` -> normal, each with a `CHANGE_OF_LIFE_SAFETY` event notification.
+> What is still missing (details in [TODO.md](TODO.md)):
+>
+> - **LifeSafetyOperation is not executed.** AE-LS-B requires it (135-2024
+>   K.2.13: "able to process silence and reset operations"), but the default
+>   stack build leaves it out, so AE-LS-B is met only in part.
+> - **Zone_Members is always empty.** The customer interface has no way to set
+>   it ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036),
+>   open).
+> - **Only a client write raises an alarm** (there is no simulated detector),
+>   and notifications go to the local subnet broadcast as unconfirmed, so no
+>   particular recipient is addressed. AcknowledgeAlarm and GetEventInformation
+>   are enabled but have not been exercised end to end at this pin.
 
 This example is seeded from
 [B-AAC (Advanced Application Controller)](https://github.com/chipkin/BACnetProfileExample-B-AAC-CPP)
@@ -63,8 +60,8 @@ Device 389007  "Chipkin Example B-LSC"   (Vendor 389 - Chipkin Automation System
     ├── Analog Output 1       "Chartreuse"  writable, commandable (REAL)
     ├── Binary Output 1       "Fuchsia"     writable, commandable (0/1)
     ├── Multi-State Output 1  "Indigo"      writable, commandable (state 1..3)
-    ├── Life Safety Point 1   "Amber"       ⚠ configured but not yet functional (see above)
-    ├── Life Safety Zone 1    "Azure"       ⚠ configured but not yet functional (see above)
+    ├── Life Safety Point 1   "Amber"       BACnetLifeSafetyState; intrinsic ChangeOfLifeSafety + fault alarms
+    ├── Life Safety Zone 1    "Azure"       same, plus Zone_Members (always empty - see above)
     ├── Notification Class 1  "Crimson"     routes Amber's/Azure's alarms to recipients
     └── Network Port 1        "Vermilion"   the BACnet/IP port (required)
 ```
@@ -73,9 +70,9 @@ Device 389007  "Chipkin Example B-LSC"   (Vendor 389 - Chipkin Automation System
 
 ### BIBBs (BACnet Interoperability Building Blocks)
 
-These are what the B-LSC profile requires. All are implemented; the ⚠ column
-flags the one whose objects are configured but not currently functional over
-the wire because of the stack defect above.
+These are what the B-LSC profile requires. ⚠ marks the one this example meets
+only in part, and "not verified" marks what is configured but has not been
+exercised end to end at this Stack Pin.
 
 | BIBB | Description | Supported |
 |------|-------------|:---------:|
@@ -84,9 +81,9 @@ the wire because of the stack defect above.
 | DS-WP-B | Data Sharing - WriteProperty - B | ✅ |
 | DS-WPM-B | Data Sharing - WritePropertyMultiple - B | ✅ |
 | DS-COV-B | Data Sharing - COV - B | ✅ |
-| AE-LS-B | Alarm and Event - Life Safety - B | ✅ implemented; ⚠ Amber/Azure not functional over the wire yet - see above |
-| AE-ACK-B | Alarm and Event - ACK - B | ✅ |
-| AE-INFO-B | Alarm and Event - Information - B | ✅ |
+| AE-LS-B | Alarm and Event - Life Safety - B | ⚠ part: CHANGE_OF_LIFE_SAFETY notifications work; LifeSafetyOperation (silence/reset) is not executed - see above |
+| AE-ACK-B | Alarm and Event - ACK - B | ✅ configured; not verified |
+| AE-INFO-B | Alarm and Event - Information - B | ✅ configured; not verified |
 | DM-DDB-A | Device Management - Dynamic Device Binding - A (initiate) | ✅ |
 | DM-DDB-B | Device Management - Dynamic Device Binding - B (answer) | ✅ |
 | DM-DOB-B | Device Management - Dynamic Object Binding - B | ✅ |
@@ -100,9 +97,9 @@ the wire because of the stack defect above.
 | Service | Notes |
 |---------|-------|
 | ReadProperty / ReadPropertyMultiple | Responds to property reads (DS-RP-B / DS-RPM-B). |
-| WriteProperty / WritePropertyMultiple | Accepts writes to the commandable outputs and (in code; see the ⚠ above) Amber/Azure (DS-WP-B / DS-WPM-B). |
+| WriteProperty / WritePropertyMultiple | Accepts writes to the commandable outputs and to Amber's/Azure's `Present_Value` and `Mode` (DS-WP-B / DS-WPM-B). |
 | SubscribeCOV | Bronze's and Amber's `Present_Value` are subscribable (DS-COV-B). |
-| ConfirmedEventNotification / UnconfirmedEventNotification | Sent when Amber/Azure transition, once the stack defect above is resolved (AE-LS-B). |
+| ConfirmedEventNotification / UnconfirmedEventNotification | Sent when Amber/Azure transition (AE-LS-B). The recipient is the local subnet broadcast, unconfirmed. |
 | AcknowledgeAlarm | Accepts an operator acknowledgement (AE-ACK-B). |
 | GetEventInformation | Reports active events (AE-INFO-B). |
 | Who-Is / I-Am | Answers Who-Is with I-Am, and broadcasts an I-Am on start-up (DM-DDB-B); also broadcasts a Who-Is on start-up (DM-DDB-A). |
@@ -110,7 +107,7 @@ the wire because of the stack defect above.
 | DeviceCommunicationControl | Enable / disable-initiation, password-gated (DM-DCC-B). |
 | ReinitializeDevice | Cold/warm start; SimpleACKs then actually restarts (DM-RD-B). |
 | TimeSynchronization / UTCTimeSynchronization | Accepted (DM-TS-B / DM-UTC-B). |
-| LifeSafetyOperation | Implemented in `main.cpp` and registered, but **not enabled** on the linked stack build - see [TODO.md #2](TODO.md). Not itself a BIBB this profile requires. |
+| LifeSafetyOperation | Implemented in `main.cpp` and registered, but **not enabled**: the default stack build does not compile it - see [TODO.md #2](TODO.md). AE-LS-B, which this profile requires, includes executing it (K.2.13). |
 
 ### Object types
 
@@ -123,8 +120,8 @@ the wire because of the stack defect above.
 | Analog Output | 1 | Chartreuse |
 | Binary Output | 1 | Fuchsia |
 | Multi-State Output | 1 | Indigo |
-| Life Safety Point ⚠ | 1 | Amber |
-| Life Safety Zone ⚠ | 1 | Azure |
+| Life Safety Point | 1 | Amber |
+| Life Safety Zone | 1 | Azure |
 | Notification Class | 1 | Crimson |
 | Network Port | 1 | Vermilion |
 
@@ -155,7 +152,9 @@ This is a **self-contained** project. It ships:
 - `common/` - the shared helper (UDP, callbacks, CLI, keyboard) vendored in.
 - `CMakeLists.txt` - the build, the same on Windows, Linux, and macOS.
 - `docs/PICS.md` - the conformance statement.
-- `TODO.md` - the engineering detail behind the stack-defect callouts above.
+- `TODO.md` - the engineering detail behind the status callout above.
+- `tests/` - the Wire Tests (see [Wire Tests](#wire-tests)), and `wiretest/`, the
+  series' shared Python harness they are written against (vendored, like `common/`).
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack as a git submodule**
   (private; requires a license - see above). Its sources are compiled into
   the executable, so there is no library or DLL to build, ship, or install.
@@ -217,13 +216,13 @@ build, ship, or install first, and the build is identical on every platform.
 Expected output (captured from a real build of this documented command):
 
 ```
-BACnet B-LSC (Life Safety Controller) Example - C++ v1.0.0
-CAS BACnet Stack version: 6.0.21.0
-Common helper (common/) version: 2.5.0
+BACnet B-LSC (Life Safety Controller) Example - C++ v1.1.0
+CAS BACnet Stack version: 6.0.23.0
+Common helper (common/) version: 3.3.0
 FYI: Listening for BACnet/IP on UDP port 47808 (Network Port 1).
 ::CASBACnetStack::BACnetInterface::RegisterCallbackLifeSafetyOperation() ... - FYI: This feature was not compiled. To enable, re-compile the CAS BACnet Stack with this defined: STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION
-TX 21 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1)
-TX 8 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1)
+TX 21 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1) - Unconfirmed: I-Am
+TX 8 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1) - Unconfirmed: Who-Is
 FYI: Device 389007 ("Chipkin Example B-LSC") ready. Vendor ID 389. Press 'h' for help.
 ```
 
@@ -232,7 +231,7 @@ itself; the second is the start-up Who-Is (DM-DDB-A). Both go to the **local
 subnet broadcast** address (computed from the Network Port's interface), not
 the global `255.255.255.255`. As clients talk to the device you'll see
 `RX ... bytes from ...` and `TX ... bytes to ...` lines showing the traffic.
-The `RegisterCallbackLifeSafetyOperation` line is expected - see the ⚠
+The `RegisterCallbackLifeSafetyOperation` line is expected - see the status
 callout above and [TODO.md #2](TODO.md).
 
 The device listens on UDP **47808** (BACnet/IP). Allow that port through your
@@ -263,9 +262,8 @@ While the example runs, these keys are available:
 | up arrow | Increase Analog Input 1 (`Bronze`) by 1.1 (also feeds its COV subscribers). |
 | down arrow | Decrease Analog Input 1 (`Bronze`) by 1.1 (also feeds its COV subscribers). |
 
-To fire a life-safety alarm (once the stack defect above is resolved),
-WriteProperty Amber's or Azure's `Present_Value` to `2` (alarm) or `3`
-(fault); write `0` to clear either.
+To fire a life-safety alarm, WriteProperty Amber's or Azure's `Present_Value`
+to `2` (alarm) or `3` (fault); write `0` to clear either.
 
 ## Verify
 
@@ -277,20 +275,19 @@ Use a BACnet client such as the
    Who-Is at start-up.
 2. **Browse the object model** - the device shows ten objects, including
    Life Safety Point "Amber" and Life Safety Zone "Azure". Reading the
-   Device's `Object_List` returns all ten; `Protocol_Revision` returns `24`.
-   `Object_Identifier`/`Object_Type` read back correctly on every object
-   including Amber/Azure - everything else on those two currently does not,
-   see the callout above.
+   Device's `Object_List` returns all ten; `Protocol_Revision` returns `30`.
+   Every property each object lists in its `Property_List` reads as a value
+   (the Wire Tests check this).
 3. **Read the inputs and outputs** - ReadProperty every required property of
    Bronze, Emerald, Hot Pink, Chartreuse, Fuchsia and Indigo and confirm they
    answer. WriteProperty a commandable output's `Present_Value` at a
    priority, re-read it and its `Priority_Array`, then write `NULL` to
    relinquish and confirm it falls back to `Relinquish_Default`.
-4. **Life-safety alarming** - **currently blocked**, see the ⚠ callout at the
-   top of this document. Once resolved: WriteProperty Amber's `Present_Value`
-   to `2` (alarm), confirm `Event_State` becomes `life-safety-alarm` and a
-   `CHANGE_OF_LIFE_SAFETY` `EventNotification` arrives; write `0` to return
-   to normal.
+4. **Life-safety alarming** - WriteProperty Amber's `Present_Value` to `2`
+   (alarm), confirm `Event_State` becomes `life-safety-alarm` and a
+   `CHANGE_OF_LIFE_SAFETY` `EventNotification` is broadcast; write `3` for
+   `fault`; write `0` to return to normal. (Checked over the wire at
+   `64b2cfac5`.)
 5. **Device management** - DeviceCommunicationControl
    `disable-initiation`/`enable`; ReinitializeDevice `COLDSTART` (confirm a
    SimpleACK, then that the device actually restarts and re-announces with
@@ -300,11 +297,28 @@ For a property-by-property review against the conformance statement, and for
 what is and is not exercised end-to-end, see [TUTORIAL.md](TUTORIAL.md) and
 [docs/PICS.md](docs/PICS.md).
 
+## Wire Tests
+
+Discovery, automated: a Python BACnet client drives the running example over
+BACnet/IP from outside it, the way a client discovers a device - Who-Is, the
+Device's `Object_List`, then for every object its `Property_List` and a
+ReadProperty of every property it lists. Every read must come back as a value; an
+Error, Reject or Abort fails the run. Python 3 standard library only:
+
+```bash
+python3 tests/run_wire_tests.py --exe build/BACnetExampleBLSC          # Linux/macOS
+python tests\run_wire_tests.py --exe build\Release\BACnetExampleBLSC.exe   # Windows
+```
+
+It ends with `ALL WIRE TESTS PASSED` (exit 0). CI runs it on Linux after the
+smoke test. [tests/README.md](tests/README.md) says what each check proves. It
+does not test the life-safety alarms yet.
+
 
 ## The BACnet profile example series
 
 <!-- PROFILE-TABLE:BEGIN (generated from cas-bacnet-stack-examples/docs/profile-table.md - do not edit here) -->
-The CAS BACnet Stack supports every standardized device profile in ASHRAE 135-2024 Annex L, and there is one example repository per profile. Pick the profile your device claims, then the language you build in. "Ask" means the example hasn't been built yet for that language - [contact Chipkin](https://store.chipkin.com/contact-us) if you need one.
+There is one example repository per standardized device profile in ASHRAE 135-2024 Annex L. An example marked ⛔ is blocked: the stack cannot yet perform that profile's function through its customer interface, and the example's README says what it does today. Pick the profile your device claims, then the language you build in. "Ask" means the example hasn't been built yet for that language - [contact Chipkin](https://store.chipkin.com/contact-us) if you need one.
 
 ### Controllers (Annex L.4)
 
@@ -327,8 +341,8 @@ The CAS BACnet Stack supports every standardized device profile in ASHRAE 135-20
 
 | Profile | C++ | Node.js | C# | Rust | Python | Go |
 |---|---|---|---|---|---|---|
-| **B-ACC** Access Control Controller | [B-ACC-CPP](https://github.com/chipkin/BACnetProfileExample-B-ACC-CPP) | Ask | Ask | Ask | Ask | Ask |
-| **B-AACC** Advanced Access Control Controller | [B-AACC-CPP](https://github.com/chipkin/BACnetProfileExample-B-AACC-CPP) | Ask | Ask | Ask | Ask | Ask |
+| **B-ACC** Access Control Controller | [B-ACC-CPP](https://github.com/chipkin/BACnetProfileExample-B-ACC-CPP) ⛔ blocked on [stack #2150](https://github.com/chipkin/cas-bacnet-stack/issues/2150), [#2044](https://github.com/chipkin/cas-bacnet-stack/issues/2044) | Ask | Ask | Ask | Ask | Ask |
+| **B-AACC** Advanced Access Control Controller | [B-AACC-CPP](https://github.com/chipkin/BACnetProfileExample-B-AACC-CPP) ⛔ blocked on [stack #2150](https://github.com/chipkin/cas-bacnet-stack/issues/2150), [#2044](https://github.com/chipkin/cas-bacnet-stack/issues/2044) | Ask | Ask | Ask | Ask | Ask |
 
 ### Lighting controllers (Annex L.11)
 
@@ -349,7 +363,7 @@ The CAS BACnet Stack supports every standardized device profile in ASHRAE 135-20
 
 | Profile | C++ | Node.js | C# | Rust | Python | Go |
 |---|---|---|---|---|---|---|
-| **B-AS** Authorization Server | [B-AS-CPP](https://github.com/chipkin/BACnetProfileExample-B-AS-CPP) | Ask | Ask | Ask | Ask | Ask |
+| **B-AS** Authorization Server | [B-AS-CPP](https://github.com/chipkin/BACnetProfileExample-B-AS-CPP) ⛔ blocked on [stack #2043](https://github.com/chipkin/cas-bacnet-stack/issues/2043) | Ask | Ask | Ask | Ask | Ask |
 
 ### Miscellaneous (Annex L.7, combinable with any one family)
 
@@ -357,10 +371,10 @@ The CAS BACnet Stack supports every standardized device profile in ASHRAE 135-20
 |---|---|---|---|---|---|---|
 | **B-BBMD** Broadcast Management Device | [B-BBMD-CPP](https://github.com/chipkin/BACnetProfileExample-B-BBMD-CPP) | Ask | Ask | Ask | Ask | Ask |
 | **B-ACDC** Access Control Door Controller | [B-ACDC-CPP](https://github.com/chipkin/BACnetProfileExample-B-ACDC-CPP) | Ask | Ask | Ask | Ask | Ask |
-| **B-ACCR** Access Control Credential Reader | [B-ACCR-CPP](https://github.com/chipkin/BACnetProfileExample-B-ACCR-CPP) | Ask | Ask | Ask | Ask | Ask |
+| **B-ACCR** Access Control Credential Reader | [B-ACCR-CPP](https://github.com/chipkin/BACnetProfileExample-B-ACCR-CPP) ⛔ blocked on [stack #3934](https://github.com/chipkin/cas-bacnet-stack/issues/3934) | Ask | Ask | Ask | Ask | Ask |
 | **B-RTR** Router | [B-RTR-CPP](https://github.com/chipkin/BACnetProfileExample-B-RTR-CPP) | Ask | Ask | Ask | Ask | Ask |
 | **B-GW** Gateway | [B-GW-CPP](https://github.com/chipkin/BACnetProfileExample-B-GW-CPP) | Ask | Ask | Ask | Ask | Ask |
-| **B-DAP** Device Address Proxy | [B-DAP-CPP](https://github.com/chipkin/BACnetProfileExample-B-DAP-CPP) | Ask | Ask | Ask | Ask | Ask |
+| **B-DAP** Device Address Proxy | [B-DAP-CPP](https://github.com/chipkin/BACnetProfileExample-B-DAP-CPP) ⛔ blocked on [stack #2032](https://github.com/chipkin/cas-bacnet-stack/issues/2032) | Ask | Ask | Ask | Ask | Ask |
 | **B-SCHUB** BACnet/SC Hub | [B-SCHUB-CPP](https://github.com/chipkin/BACnetProfileExample-B-SCHUB-CPP) | Ask | Ask | Ask | Ask | Ask |
 | **B-GENERAL** General device (Annex L.8) | *(satisfied by every example above)* | — | — | — | — | — |
 
@@ -388,7 +402,7 @@ Client-side profiles.
 | **B-EWS** Elevator Workstation | planned | — | — | — | — | — |
 | **B-AEWS** Advanced Elevator Workstation | planned | — | — | — | — | — |
 
-🚧 = in progress. "Ask" = not yet built for that language; contact Chipkin if you need it. Profile definitions: ANSI/ASHRAE 135-2024 Annex L. BIBB definitions: Annex K. Get the stack: <https://store.chipkin.com/services/stacks/bacnet-stack>.
+🚧 = in progress. ⛔ = Blocked Example (blocked on the named stack gap). "Ask" = not yet built for that language; contact Chipkin if you need it. Profile definitions: ANSI/ASHRAE 135-2024 Annex L. BIBB definitions: Annex K. Get the stack: <https://store.chipkin.com/services/stacks/bacnet-stack>.
 <!-- PROFILE-TABLE:END -->
 
 ## References
