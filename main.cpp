@@ -1427,7 +1427,7 @@ bool GetPropertyTime(const uint32_t deviceInstance, const uint16_t objectType,
     return true;
 }
 
-/// AcknowledgeAlarm (AE-ACK-B) - "Maintain a list of unacknowledged alarms / events"
+// AcknowledgeAlarm (AE-ACK-B) - "Maintain a list of unacknowledged alarms / events"
 // and "Notifying other recipients that the acknowledgment has been received"
 // (135-2024 L.5.2). The STACK runs the 13.5.2 service procedure: it finds the object
 // (UNKNOWN_OBJECT if there is none, NO_ALARM_CONFIGURED if it has no event
