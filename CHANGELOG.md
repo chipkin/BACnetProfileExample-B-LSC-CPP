@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`common/` 3.3.0 -> 3.4.0**, copied verbatim from B-SS-CPP `5d78299`: `HelperSendMessage`
+  sends a broadcast addressed to this socket's own address to the subnet broadcast instead of
+  unicast to itself (stack #3933). README version lines updated.
+- **`wiretest/` 0.5.0 -> 0.6.0**, copied verbatim from B-LS-CPP. Backward compatible: it adds
+  codec helpers, `wiretest.SimulatedServer`, `wiretest.alarm`, `wiretest.Workstation` and
+  `wiretest.wait_until`; the existing tests are unchanged.
+- `tests/discovery_test.py` sends its Who-Is once more, with a visible `[RETRY]` line, when no
+  I-Am comes back in 3 s (`tools/patch-discovery-whois-retry.py` from the example series).
+  Who-Is is unconfirmed, so nothing else retries it, and the example's UDP receive can drop a
+  datagram on Windows (`common/` SimpleUDP).
 - **Stack Pin moves to `6.x` @ `64b2cfac5` (6.0.23)** from `6.x` @ `abd4cee1`
   (6.0.21), per the series rule that a pin moves to the latest `6.x` whenever an
   example is updated. Based on the local branch `fix-device-version-properties`

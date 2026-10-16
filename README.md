@@ -22,7 +22,7 @@ prebuilt binaries yet; clone this repository and [build it yourself](#build).
 > **Versions:** this document describes **example v1.1.0**, built and
 > verified against the **CAS BACnet Stack** (`submodules/cas-bacnet-stack` @
 > `64b2cfac5`, reporting **6.0.23**), at **Protocol_Revision 30**, with the
-> vendored `common/` helper at **v3.3.0**.
+> vendored `common/` helper at **v3.4.0**.
 > Running the example prints all three - if what it prints disagrees with
 > this line, trust the program and check `CHANGELOG.md`.
 
@@ -218,7 +218,7 @@ Expected output (captured from a real build of this documented command):
 ```
 BACnet B-LSC (Life Safety Controller) Example - C++ v1.1.0
 CAS BACnet Stack version: 6.0.23.0
-Common helper (common/) version: 3.3.0
+Common helper (common/) version: 3.4.0
 FYI: Listening for BACnet/IP on UDP port 47808 (Network Port 1).
 ::CASBACnetStack::BACnetInterface::RegisterCallbackLifeSafetyOperation() ... - FYI: This feature was not compiled. To enable, re-compile the CAS BACnet Stack with this defined: STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION
 TX 21 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1) - Unconfirmed: I-Am
