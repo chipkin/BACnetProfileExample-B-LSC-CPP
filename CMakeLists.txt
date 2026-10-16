@@ -64,14 +64,40 @@ endif()
 # submodules/cas-bacnet-stack/adapters/cpp/CMakeLists.txt for what each mode does.
 add_subdirectory("${CAS_STACK_DIR}/adapters/cpp" cas-bacnet-stack-adapter)
 
+# --- LifeSafetyOperation (AE-LS-B) ------------------------------------------
+# AE-LS-B executes LifeSafetyOperation (135-2024 K.2.13). The stack compiles that
+# service only when STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION is defined - its
+# documented public toggle (CASBACnetStackOptions.h: "Customer firmware opts in by
+# defining STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION explicitly"); the default
+# STACK_OPTION_TARGET_FULL preset leaves it off. In SOURCE mode the stack's .cpp
+# files are compiled here, so define it on the adapter target. In STATIC / DLL
+# mode the prebuilt library must have been built with it, e.g. on Windows:
+#     CL=-DSTACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION tools/build-stack-static.sh <this repo>
+# Without it main() stops at start-up ("Failed to enable the LifeSafetyOperation
+# service") instead of advertising a service it cannot execute.
+if(CAS_BACNET_STACK_LINK STREQUAL "SOURCE")
+    target_compile_definitions(cas_bacnet_stack_adapter PRIVATE STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION)
+else()
+    message(STATUS "B-LSC: CAS_BACNET_STACK_LINK=${CAS_BACNET_STACK_LINK} - the prebuilt stack library "
+                   "must be built with STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION, or the example exits at start-up")
+endif()
+
 # --- The shared example helper ----------------------------------------------
 set(COMMON_SOURCES
     "${EXAMPLES_COMMON_DIR}/CASExampleHelper.cpp"
     "${EXAMPLES_COMMON_DIR}/SimpleUDP.cpp")
 
+# --- SIMULATION (not part of a real product) ---------------------------------
+# simulation/SimulationControl.cpp is the Wire Tests' loopback-only back door to
+# the simulated smoke detector (main.cpp section 1b). It is off unless
+# BLSC_SIMULATION_CONTROL_PORT is set. A real product deletes it.
+set(SIMULATION_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/simulation/SimulationControl.cpp")
+
 # --- The executable ---------------------------------------------------------
 add_executable(BACnetExampleBLSC
     main.cpp
+    ${SIMULATION_SOURCES}
     ${COMMON_SOURCES})
 
 target_include_directories(BACnetExampleBLSC PRIVATE
@@ -88,7 +114,7 @@ if(MSVC)
 else()
     set(EXAMPLE_WARNINGS "-Wall;-Wextra")
 endif()
-set_source_files_properties(main.cpp ${COMMON_SOURCES}
+set_source_files_properties(main.cpp ${SIMULATION_SOURCES} ${COMMON_SOURCES}
     PROPERTIES COMPILE_OPTIONS "${EXAMPLE_WARNINGS}")
 
 # --- Platform sockets -------------------------------------------------------

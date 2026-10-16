@@ -1,72 +1,64 @@
-# TODO - B-LSC features not yet implemented
+# TODO - B-LSC known gaps
 
-This example implements as much of the B-LSC (Life Safety Controller) profile as the
-CAS BACnet Stack's customer-facing API supports. The items below are what it does not do,
-why, and what it would take. Re-check every entry whenever the Stack Pin moves.
-Checked at stack `6.x` @ `64b2cfac5` (6.0.23), 2026-10-15.
+This example is **Profile-functional** (series bar, `docs/GLOSSARY.md` in the
+examples-series folder): it performs the B-LSC Profile Function against a Peer, shows
+its Failure Modes, and proves both with Wire Tests (`tests/`). The items below are what
+it still does not do, why, and what it would take. Re-check every entry whenever the
+Stack Pin moves. Checked at stack `6.x` @ `64b2cfac5` (6.0.23), 2026-10-16.
 
-The old item 0 ("Life Safety Point/Zone objects cannot serve almost any property") is
-gone: at `64b2cfac5` the stack falls through to this example's callbacks (stack #2187), the
-discovery Wire Test reads every property both objects list, and a WriteProperty of
-`Present_Value` = alarm / fault / quiet moves `Event_State` to life-safety-alarm / fault /
-normal with an event notification each time. Stack issue
-[#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036) (customer
-`AddLifeSafetyPointObject` / `AddLifeSafetyZoneObject` exports) is still open, for item 1
-and for the stack's own life-safety engine (Mode / Accepted_Modes / Silenced / zone
-roll-up), which this example still stands in for with its own globals.
+## 1. Life Safety Zone 1 (Azure) Zone_Members cannot be set [KNOWN GAP]
 
-## 1. Life Safety Zone 1 (Azure) Zone_Members cannot be set
-
-`Zone_Members` (cl. 12.16, required, a `BACnetLIST of BACnetDeviceObjectReference`) is listed
-and reads as an **empty list** at `64b2cfac5`: the stack serves it, but the only way to fill
-it is `BACnetStackTestTool_SetLifeSafetyZoneMembers` in `CASBACnetStackTestToolDLL.h`, and
-this series uses the customer interface only. The generic constructed-property callback
+`Zone_Members` (cl. 12.16.26, required, a `BACnetLIST of BACnetDeviceObjectReference`)
+"shall indicate which Life Safety Point and Life Safety Zone objects are members of the
+zone". `main.cpp` rolls Life Safety Point 1 (Amber) up into Azure, so Zone_Members should
+name Amber - but it reads as an **empty list**: the stack serves it, and the only way to
+fill it is `BACnetStackTestTool_SetLifeSafetyZoneMembers` in `CASBACnetStackTestToolDLL.h`,
+which this series may not use. The generic constructed-property callback
 (`BACnetStack_RegisterCallbackGetPropertyConstructed`) is test-tool only too.
 
+**Evidence:** `tests/life_safety_test.py` reads it and reports
+`[KNOWN GAP] Life Safety Zone 1's Zone_Members lists Life Safety Point 1, the member it
+rolls up - stack #2036 ...; read value=None` on every run (the read succeeds with an
+empty list). When a customer setter exists the line prints `[GAP CLOSED]`: set the
+members in `main()` and turn it into a `record()` check.
+
 **Blocked on** [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)
-(open; owner-approved as a customer-interface addition under tracking issue #2159). When a
-customer setter exists, set Zone 1's members to Life Safety Point 1.
+(open; owner-approved as a customer-interface addition under tracking issue #2159).
 
-## 2. LifeSafetyOperation (service 37) is registered but not enabled
+## 2. The stack's own life-safety engine is not used
 
-`main.cpp` registers `BACnetStack_RegisterCallbackLifeSafetyOperation` and implements
-`LifeSafetyOperation()` (silence / unsilence / reset, applied to Amber, Azure or both). The
-stack's default preset (`STACK_OPTION_TARGET_FULL`) does not compile the service:
-`STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` is set only by `BACNET_STACK_TESTTOOL`. At start-up
-the example prints
+The stack has a Life Safety Point/Zone engine (`BACnetStackLifeSafetyObject` /
+`BACnetStackLifeSafetyPoint` / `BACnetStackLifeSafetyZone`: Mode / Accepted_Modes,
+latching, zone roll-up), but its configuration surface (`AddLifeSafetyPointObject`,
+`AddLifeSafetyZoneObject`, `SetLifeSafetyAcceptedModes`, ...) is not exported through
+`CASBACnetStackDLL.h` (#2036 again). So this example holds Amber's and Azure's state
+itself (`LifeSafetyObjectState` in `main.cpp`) and applies the latching, silencing and
+reset rules in its own callbacks; the stack's intrinsic `CHANGE_OF_LIFE_SAFETY` and
+`FAULT_LIFE_SAFETY` algorithms watch the `Present_Value` those callbacks report. This
+works - the Wire Tests prove it - but:
 
-```
-::CASBACnetStack::BACnetInterface::RegisterCallbackLifeSafetyOperation() ... - FYI: This
-feature was not compiled. To enable, re-compile the CAS BACnet Stack with this defined:
-STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION
-```
+- `Mode` is accepted unconditionally: `Accepted_Modes` has no customer setter, and the
+  stack's reading of cl. 12.15.13 with an empty `Accepted_Modes` would refuse every Mode
+  write.
+- A mode change does not run the algorithm's "transition on a pMode change" path
+  (cl. 13.3.8), because nothing calls `UpdateValue` for `Mode`. Not tested.
 
-and leaves the service bit off rather than advertise a service it cannot execute.
+## 3. Not Wire-Tested
 
-**This is a real gap in the profile, not an optional extra.** An earlier version of this file
-said DM-LSO-B is not a B-LSC BIBB, "only AE-LS-B is". That is wrong: AE-LS-B itself lists
-LifeSafetyOperation under Execute (135-2024 K.2.13: "Life safety device B is able to generate
-life safety notifications and is able to process silence and reset operations on its life
-safety objects"). So AE-LS-B is met only in part.
+- **COV** (DS-COV-B): Amber's and Bronze's `Present_Value` are subscribable and every
+  detector change calls `UpdateValue`, but no Wire Test subscribes.
+- **A silent recipient**: `Number_Of_APDU_Retries` is served as 3 and the Wire Test
+  checks the value, but no test lets a notification go unanswered and counts the
+  retransmissions (B-AAC-CPP's `silent_recipient_test.py` does that).
+- **UNSILENCE** and the audible/visual-only variants: implemented, not exercised.
 
-**To do (phase 2):** the earlier claim that turning the option on needs an edit inside the
-stack submodule is also wrong. This example's own `CMakeLists.txt` can add it to the adapter
-target, the way `BACnetProfileExample-B-LS-CPP` adds `STACK_OPTION_WRITE_GROUP`:
+## Done in 1.2.0 (was open in 1.1.0)
 
-```cmake
-target_compile_definitions(cas_bacnet_stack_adapter PRIVATE STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION)
-```
-
-(SOURCE build; a prebuilt STATIC/DLL library must be built with it.) Then add
-`SERVICE_LIFE_SAFETY_OPERATION` to the enabled services and prove silence/reset with a Wire
-Test. Not done in the phase-1 update because it changes behaviour that has never been tested.
-
-## 3. Profile-functional gaps (phase 2)
-
-- **Only a client write raises an alarm.** There is no simulated detector; the alarm demo is a
-  WriteProperty of `Present_Value`.
-- **No particular recipient.** Notification Class 1 "Crimson" sends to the local subnet
-  broadcast, unconfirmed, so no Peer is addressed and nothing waits for an acknowledgement.
-- **AcknowledgeAlarm and GetEventInformation** are enabled but have not been exercised end to
-  end at this pin.
-- **No Wire Test of the Profile Function yet.** `tests/` has the discovery test only.
+- LifeSafetyOperation is compiled in (`STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`, the
+  stack's documented public toggle, defined in `CMakeLists.txt`) and enabled; AE-LS-B is
+  met in full.
+- A simulated smoke detector raises the alarm; a client write cannot (`Present_Value`
+  is read-only again, as Table 12-18 says).
+- The alarms go, confirmed, to a particular recipient (Device 389107, the operator
+  workstation), not the subnet broadcast.
+- AcknowledgeAlarm and GetEventInformation are exercised end to end.

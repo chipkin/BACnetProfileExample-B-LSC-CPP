@@ -5,6 +5,71 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - unreleased
+
+Profile-functional rework (series bar, `docs/GLOSSARY.md`; brief
+`docs/phase2-rework-brief.md` in the example-series folder). Stack Pin unchanged
+(`6.x` @ `64b2cfac5`), `common/` 3.4.0 and `wiretest/` 0.6.0 unchanged.
+
+Profile Function, 135-2024 L.5.2 (verbatim): "A B-LSC device performs life safety
+alarm detection and control. It supports life safety objects."
+
+### Added
+
+- **A simulated smoke detector** (`main.cpp` section 1b, labelled Simulation) drives
+  Life Safety Point 1 "Amber". `Tracking_Value` follows it; `Present_Value` latches
+  `alarm` until a LifeSafetyOperation RESET; a fault follows the detector. Life Safety
+  Zone 1 "Azure" rolls Amber up. The Wire Tests move the detector through a
+  loopback-only test control channel (`simulation/SimulationControl.*`, off unless
+  `BLSC_SIMULATION_CONTROL_PORT` is set; B-GW-CPP's pattern with a generic handler).
+- **LifeSafetyOperation is executed** (AE-LS-B, K.2.13). `CMakeLists.txt` defines
+  `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (the stack's documented public toggle)
+  for SOURCE builds; a STATIC/DLL library must be built with it (README "Build").
+  Silence / unsilence set `Silenced`; RESET / RESET_ALARM unlatch; a reset while the
+  detector still sees smoke, of an object that is not latched, and every RESET_FAULT
+  are refused with `OBJECT` / `INVALID_OPERATION_IN_THIS_STATE` (cl. 13.13.1.3.1,
+  13.13.2). An operation on the zone also operates its member; one with no object
+  operates both. `Operation_Expected` is SILENCE while sounding, RESET once silenced.
+- **Wire Tests** `tests/life_safety_test.py` (37 checks + 1 known gap) and
+  `tests/fault_test.py` (13), with `tests/lsc_setup.py` and the generic
+  `tests/wiretest_extras.py` (proposed for wiretest 0.7.0:
+  `life_safety_operation_request`, `announce`, `SimulationControl`,
+  `request_with_retry`, life-safety constants). The Peer is `wiretest.Workstation`
+  as Device 389107.
+- Device `Number_Of_APDU_Retries` served as 3 (12.11.29's suggested default; the
+  stack default 0 never retransmits a confirmed notification).
+
+### Changed
+
+- **Alarms go to a recipient**: Notification Class 1 names the operator workstation
+  by device instance (389107), confirmed, instead of the local subnet broadcast,
+  unconfirmed. The stack binds the address from the workstation's I-Am.
+- **`Present_Value` of Amber and Azure is read-only again** (Table 12-18): a client
+  can no longer fake or clear an alarm; only the detector and LifeSafetyOperation
+  move it. `Mode` stays writable.
+- **Reliability**: the callback serves only cl. 13.2.2.2's first stage
+  (`no-fault-detected`); the stack's FAULT_LIFE_SAFETY algorithm supplies
+  `multi-state-fault` and serves the combination (stack #2359). A draft of this
+  release computed the algorithm's answer in the callback too; mutation testing
+  showed the stack never used it, so it was removed.
+- AcknowledgeAlarm callback: the stack runs the 13.5.2 checks itself and calls the
+  callback before the time-stamp check, so the callback now logs who acknowledges
+  and leaves the decision to the stack (B-AAC-CPP 1.4.0's finding). Its object check
+  was unreachable.
+- README (scenario, Failure Modes, what is Simulation, Wire Tests), TUTORIAL, PICS
+  (regenerated; Number_Of_APDU_Retries and Reliability rows), AGENTS, TODO (rewritten:
+  Zone_Members `[KNOWN GAP]`, untested COV / silent recipient / unsilence),
+  release.yml step name. APP_VERSION 1.1.0 -> 1.2.0.
+
+### Verified (2026-10-16)
+
+- Windows 11 STATIC (NMake, VS 18; stack `ReleaseLib|x64` rebuilt with
+  `CL=-DSTACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`): 0 warnings; Wire Tests 67/67 x3
+  (17 + 37 + 13), 1 known gap, no `[RETRY]`.
+- Linux WSL Ubuntu 22.04 SOURCE: Wire Tests 67/67 x3, 1 known gap, no `[RETRY]`.
+- 13 mutations of `main.cpp` (Linux), each rebuilt (relink checked) and run; every one
+  fails at least one check - see the commit message for the failure lines.
+
 ## [1.1.0] - unreleased
 
 ### Changed

@@ -37,6 +37,32 @@ device *instance* is already runtime-configurable via `--deviceID`, but
 shipping two units with the same compiled-in `Object_Name` is a spec
 violation clients will not politely ignore.
 
+**Wire in a real detector** - the smoke detector is **Simulation** (`main.cpp`
+section 1b). Everything it does goes through one function,
+`ApplyDetectorReading(reading)`: call it with `LIFE_SAFETY_STATE_QUIET`,
+`_ALARM` or `_FAULT` whenever your detector loop reports a change, from the
+main loop (it calls `BACnetStack_UpdateValue`, which must run on the stack's
+thread). Then delete `simulation/`, the `SimulationControl::` calls in
+`main()`, `HandleSimulationCommand()` and `SIMULATION_SOURCES` in
+`CMakeLists.txt`.
+
+**Change who gets the alarms** - Notification Class 1 names its one recipient
+by device instance, `RECIPIENT_DEVICE_INSTANCE` (389107). Set it to your
+head-end's instance; the stack finds the address from its I-Am (and sends a
+Who-Is for it until it has one). A recipient that has not announced itself
+gets nothing - check the Device's `Device_Address_Binding` if alarms vanish.
+A B-LSC is "not required to support modification of its alarm and event
+reporting by another device" (L.5.2), so `Recipient_List` is not writable
+here; a B-ALSC must allow it.
+
+**Change the latching and reset rules** - they are the "logic internal to the
+device" cl. 12.15 leaves a local matter, all in `main.cpp`: `FollowReading()`
+(what latches), `OperationFits()` (which LifeSafetyOperation is valid in
+which state - return false and the stack answers `OBJECT` /
+`INVALID_OPERATION_IN_THIS_STATE`), `ApplyOperation()` (what it does) and
+`OperationExpectedOf()`. The stack checks only that a named object exists;
+whether an operation fits the object's state is entirely the callback's call.
+
 ## Who serves what: the application or the stack?
 
 The single most common question when reading `main.cpp` is "who answers this
@@ -51,15 +77,15 @@ and the most interesting one in this example:
 | `Property_List` | **stack** | generated |
 | `Status_Flags` | **stack** | generated (and reflects the alarm state) |
 | `Event_State` | **stack, genuinely computed** | because this example arms an intrinsic ChangeOfLifeSafety algorithm plus a fault algorithm on Amber (`SetIntrinsicChangeOfLifeSafetyAlgorithm`/`SetFaultLifeSafetyAlgorithm` + `SetAlarmsAndEventsForObjectEnabled`), the stack drives `Event_State` to `normal` / `life-safety-alarm` / `fault`. On an object with no alarming configured, nothing serves `Event_State` and it reads its datatype default `normal(0)` by coincidence - the opposite situation, and the one every other input/output object in this file is in. |
-| `Present_Value` / `Tracking_Value` | **you** | `GetPropertyEnumerated` / `SetPropertyEnumerated` |
+| `Present_Value` / `Tracking_Value` | **you** | `GetPropertyEnumerated`, from `LifeSafetyObjectState` (moved by the detector and `LifeSafetyOperation()`; read-only on the wire) |
 | `Mode` | **you** | `GetPropertyEnumerated` / `SetPropertyEnumerated` |
-| `Reliability` | **you** | `GetPropertyEnumerated`, fixed at `no-fault-detected` (the fault *algorithm* is what drives `Event_State` to fault, not this property) |
+| `Reliability` | **stack**, from two stages | your callback serves the *first* stage (cl. 13.2.2.2: the hardware's own health - always `no-fault-detected` here); the stack's `FAULT_LIFE_SAFETY` algorithm supplies the *second* (`multi-state-fault` while `Present_Value` is `fault`) and serves the combination (stack #2359). Do not compute the algorithm's answer in the callback - an early version of 1.2.0 did, and a mutation test showed the stack never used it. |
 | `Silenced` | **you** | `GetPropertyEnumerated`, updated by `LifeSafetyOperation()` |
 | `Operation_Expected` | **you** | `GetPropertyEnumerated` |
 | `Object_Name` | **you** | `GetPropertyCharString` |
 
 That `Event_State` row is the whole point of B-LSC: arming the algorithm is
-what turns a plain writable Life Safety Point into an alarm source, and it is
+what turns a plain Life Safety Point into an alarm source, and it is
 why `Event_State` moves from "defaulted by coincidence" to "genuinely
 computed" the moment you copy this pattern to a new alarming object.
 
@@ -143,18 +169,18 @@ rather than against "it looked fine in the explorer":
 3. Diff a new object of a type against the existing one of that type.
    Anything that differs and shouldn't is a callback that matched on
    instance.
-4. Fire a life-safety alarm: WriteProperty Amber's or Azure's `Present_Value` to `2` (alarm),
-   confirm `Event_State` -> `life-safety-alarm` and a `CHANGE_OF_LIFE_SAFETY`
-   `EventNotification` arrives at the recipient; write `3` for fault; write
-   `0` to clear. Send `AcknowledgeAlarm` and `GetEventInformation` and confirm
-   both respond.
+4. Run the Wire Tests: `tests/life_safety_test.py` and `tests/fault_test.py`
+   play the whole scenario (smoke, alarm to the workstation, silence,
+   acknowledge, reset, a detector fault) and the Failure Modes. If you changed
+   a rule, change its test, and check the test fails without your change
+   (mutation-verify it - `tests/README.md`).
 5. WriteProperty a commandable output's `Present_Value` at a priority,
    re-read it (and its `Priority_Array`), then write `NULL` to relinquish and
    confirm it falls back to `Relinquish_Default`. Confirm a write to a
    read-only input is rejected.
 6. SubscribeCOV to Bronze's or Amber's `Present_Value`; change it (up/down
-   key for Bronze, WriteProperty for Amber) and confirm a COV notification
-   arrives.
+   key for Bronze, `detector smoke` on the test control channel for Amber) and
+   confirm a COV notification arrives.
 7. ReinitializeDevice `COLDSTART`; confirm a `SimpleACK`, then that the
    process actually restarts and re-announces with an I-Am.
 
@@ -189,7 +215,9 @@ exists in the source).
 | Symptom | Cause / fix |
 |---------|-------------|
 | ReadProperty of Amber's/Azure's `Object_Name`, `Present_Value`, or almost anything but `Object_Identifier`/`Object_Type` returns `Error(...): object: unknown-object` | You are on a stack older than `6.x` @ `64b2cfac5`. Up to `abd4cee1` the stack answered this for every Life Safety Point/Zone property (fixed by stack #2187). Move the Stack Pin forward. |
-| LifeSafetyOperation requests get `unrecognized-service` | Expected - the linked stack build was not compiled with `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`. See [TODO.md #2](TODO.md). |
+| The example stops at start-up with `Error: Failed to enable the LifeSafetyOperation (AE-LS-B) ...` | The stack was built without `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`. A SOURCE build gets it from `CMakeLists.txt`; a STATIC/DLL library must be rebuilt with it - README "Build". |
+| No alarm reaches the workstation | It has not announced itself: Notification Class 1 names it by device instance (389107), and the stack can only send to an instance it has bound. Read the Device's `Device_Address_Binding`; make the workstation send an I-Am (or answer the stack's Who-Is). |
+| A RESET gets `Error(object, invalid-operation-in-this-state)` | By design: the detector still sees smoke, or nothing is latched. Clear the smoke first (`detector quiet`). |
 | On start-up the app prints a wall of red `Error:` lines but the device works | **Expected - this is not your bug.** Two benign sources, both from the stack's own debug logging: (1) the device receives its **own** broadcast I-Am and logs a decode cascade - any BACnet/IP device that listens for broadcasts hears itself; (2) a one-time *"UUID has not been set. A UUID must be set for the BACnetSC device to start."* - the stack starts a BACnet/SC datalink these IP-only examples never configure. |
 | CMake error: *"CAS BACnet Stack adapter not found under: ..."* | Submodules not initialized. Run `git submodule update --init --recursive` (or pass `-D CAS_STACK_DIR=...`). |
 | `CASBACnetStackDLL.h: No such file or directory` | Same - submodules not checked out. |

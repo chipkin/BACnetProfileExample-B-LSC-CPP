@@ -1,14 +1,53 @@
 # BACnet B-LSC (Life Safety Controller) - C++ example
 
-A tutorial example showing how to implement as much of the BACnet **B-LSC
-(Life Safety Controller)** device profile as the
-[CAS BACnet Stack](https://store.chipkin.com/services/stacks/bacnet-stack)
-supports today, in C++. It answers **ReadProperty / ReadPropertyMultiple**,
-accepts **WriteProperty / WritePropertyMultiple**, accepts **SubscribeCOV**,
-generates **intrinsic life-safety alarms** (`CHANGE_OF_LIFE_SAFETY` event
-notifications), accepts **AcknowledgeAlarm** and **GetEventInformation**,
-accepts time synchronisation, and handles **DeviceCommunicationControl** and
-**ReinitializeDevice**.
+A tutorial example of the BACnet **B-LSC (Life Safety Controller)** device
+profile in C++, using the
+[CAS BACnet Stack](https://store.chipkin.com/services/stacks/bacnet-stack).
+
+**What it does** - the profile's function, 135-2024 Annex L.5.2: "A B-LSC
+device performs life safety alarm detection and control. It supports life
+safety objects." A smoke detector goes into alarm; the controller latches the
+alarm, tells the operator workstation, and lets the operator silence it,
+acknowledge it and - once the smoke has gone - reset it:
+
+1. **Smoke.** The detector (Life Safety Point 1 "Amber") sees smoke:
+   `Tracking_Value` goes to `alarm`, `Present_Value` **latches** `alarm`, and
+   its zone (Life Safety Zone 1 "Azure") follows.
+2. **The alarm goes to a recipient.** The stack's `CHANGE_OF_LIFE_SAFETY`
+   algorithm puts both objects in the `LIFE_SAFETY_ALARM` event state and
+   sends a **ConfirmedEventNotification** to the operator workstation, which
+   Notification Class 1 "Crimson" names by **device instance** (389107) - the
+   stack finds its address from the workstation's I-Am.
+3. **The operator handles it.** `LifeSafetyOperation` **SILENCE** silences the
+   sounders (`Silenced`, `Operation_Expected` moves to `RESET`);
+   **AcknowledgeAlarm** acknowledges it and every recipient gets an
+   `ACK_NOTIFICATION`; when the smoke has cleared `Tracking_Value` returns to
+   `quiet` but the alarm stays latched until **RESET**, and then the return to
+   normal is notified too.
+
+**Failure Modes** the Wire Tests show:
+
+- **RESET while the detector still sees smoke is refused** - `OBJECT` /
+  `INVALID_OPERATION_IN_THIS_STATE` (cl. 13.13.1.3.1, 13.13.2) - and the
+  alarm stays latched. So is a RESET of an object that is not latched.
+- **A detector fault** (its head pulled off its base) gives `Reliability`
+  `MULTI_STATE_FAULT`, the `FAULT` status flag and the `FAULT` event state,
+  notified to the workstation (the `FAULT_LIFE_SAFETY` algorithm, cl. 13.4).
+  An operator cannot `RESET_FAULT` it away; repairing the detector clears it.
+- **An alarm nobody acknowledges stays listed** by GetEventInformation after
+  it has returned to normal.
+
+> **The smoke detector is Simulation.** There is no detector loop card here:
+> what the detector reads (`quiet`, `smoke`, `fault`) is a variable in
+> `main.cpp` (section 1b, "SIMULATION: the smoke detector"). Only the Wire
+> Tests move it, through a **loopback-only test control channel**
+> ([`simulation/SimulationControl.h`](simulation/SimulationControl.h)) that is
+> off unless the environment variable `BLSC_SIMULATION_CONTROL_PORT` names a
+> UDP port - it is not a command-line option, and nothing on the BACnet
+> network can reach it. A real product deletes `simulation/` and feeds
+> `ApplyDetectorReading()` from its detector inputs. Everything a BACnet
+> client sees - the objects, the latching, the alarms, the operations - is
+> real BACnet behaviour of this example and the CAS BACnet Stack.
 
 **This example is not yet released.** There is no `releases` page with
 prebuilt binaries yet; clone this repository and [build it yourself](#build).
@@ -18,37 +57,30 @@ prebuilt binaries yet; clone this repository and [build it yourself](#build).
   own device.
 - **[docs/PICS.md](docs/PICS.md)** - the Protocol Implementation Conformance
   Statement: every object, every property, and who answers it.
+- **[tests/](tests/README.md)** - the Wire Tests that prove the scenario and
+  the Failure Modes, from outside the example, over BACnet/IP.
 
-> **Versions:** this document describes **example v1.1.0**, built and
+> **Versions:** this document describes **example v1.2.0**, built and
 > verified against the **CAS BACnet Stack** (`submodules/cas-bacnet-stack` @
 > `64b2cfac5`, reporting **6.0.23**), at **Protocol_Revision 30**, with the
-> vendored `common/` helper at **v3.4.0**.
-> Running the example prints all three - if what it prints disagrees with
-> this line, trust the program and check `CHANGELOG.md`.
+> vendored `common/` helper at **v3.4.0** and `wiretest/` at **v0.6.0**.
+> Running the example prints the first three - if what it prints disagrees
+> with this line, trust the program and check `CHANGELOG.md`.
 
-> **Status at stack `6.x` @ `64b2cfac5`** (checked over the wire 2026-10-15):
-> Life Safety Point 1 "Amber" and Life Safety Zone 1 "Azure" now serve every
-> property they list (stack #2187 fixed the `unknown-object` answers earlier
-> pins gave), and a WriteProperty of `Present_Value` drives the intrinsic
-> algorithms: alarm `2` -> `Event_State` life-safety-alarm, fault `3` -> fault,
-> quiet `0` -> normal, each with a `CHANGE_OF_LIFE_SAFETY` event notification.
-> What is still missing (details in [TODO.md](TODO.md)):
+> **Known gaps at stack `6.x` @ `64b2cfac5`** (details in [TODO.md](TODO.md)):
 >
-> - **LifeSafetyOperation is not executed.** AE-LS-B requires it (135-2024
->   K.2.13: "able to process silence and reset operations"), but the default
->   stack build leaves it out, so AE-LS-B is met only in part.
-> - **Zone_Members is always empty.** The customer interface has no way to set
->   it ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036),
->   open).
-> - **Only a client write raises an alarm** (there is no simulated detector),
->   and notifications go to the local subnet broadcast as unconfirmed, so no
->   particular recipient is addressed. AcknowledgeAlarm and GetEventInformation
->   are enabled but have not been exercised end to end at this pin.
+> - **Zone_Members is always empty.** Azure rolls up Amber, but the customer
+>   interface has no way to list Amber in `Zone_Members`
+>   ([chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036),
+>   open). The Wire Tests report it as a `[KNOWN GAP]`.
+> - **The stack's own life-safety engine is not exported** (#2036 again), so
+>   this example holds Amber's and Azure's state itself and `Mode` is accepted
+>   without an `Accepted_Modes` check.
 
 This example is seeded from
 [B-AAC (Advanced Application Controller)](https://github.com/chipkin/BACnetProfileExample-B-AAC-CPP)
 **minus** its Schedule/Calendar objects (not part of the B-LSC profile) and
-adds the two life-safety object types plus a LifeSafetyOperation responder.
+adds the two life-safety object types and the life-safety operations.
 
 ## The device this example creates
 
@@ -60,9 +92,9 @@ Device 389007  "Chipkin Example B-LSC"   (Vendor 389 - Chipkin Automation System
     ├── Analog Output 1       "Chartreuse"  writable, commandable (REAL)
     ├── Binary Output 1       "Fuchsia"     writable, commandable (0/1)
     ├── Multi-State Output 1  "Indigo"      writable, commandable (state 1..3)
-    ├── Life Safety Point 1   "Amber"       BACnetLifeSafetyState; intrinsic ChangeOfLifeSafety + fault alarms
-    ├── Life Safety Zone 1    "Azure"       same, plus Zone_Members (always empty - see above)
-    ├── Notification Class 1  "Crimson"     routes Amber's/Azure's alarms to recipients
+    ├── Life Safety Point 1   "Amber"       the smoke detector (SIMULATION input); latches alarm; COV-subscribable
+    ├── Life Safety Zone 1    "Azure"       the detector's zone; rolls Amber up (Zone_Members empty - see above)
+    ├── Notification Class 1  "Crimson"     sends Amber's/Azure's alarms, confirmed, to Device 389107
     └── Network Port 1        "Vermilion"   the BACnet/IP port (required)
 ```
 
@@ -70,45 +102,44 @@ Device 389007  "Chipkin Example B-LSC"   (Vendor 389 - Chipkin Automation System
 
 ### BIBBs (BACnet Interoperability Building Blocks)
 
-These are what the B-LSC profile requires. ⚠ marks the one this example meets
-only in part, and "not verified" marks what is configured but has not been
-exercised end to end at this Stack Pin.
+The B-LSC column of the Annex L.5 table is DS-RP-B, DS-WP-B, DS-COV-B, AE-LS-B,
+AE-ACK-B, AE-INFO-B, DM-DDB-A,B, DM-DOB-B and DM-DCC-B. The rows marked
+"beyond the profile" are kept from the B-AAC base this example was seeded from.
 
 | BIBB | Description | Supported |
 |------|-------------|:---------:|
 | DS-RP-B | Data Sharing - ReadProperty - B | ✅ |
-| DS-RPM-B | Data Sharing - ReadPropertyMultiple - B | ✅ |
+| DS-RPM-B | Data Sharing - ReadPropertyMultiple - B | ✅ (beyond the profile) |
 | DS-WP-B | Data Sharing - WriteProperty - B | ✅ |
-| DS-WPM-B | Data Sharing - WritePropertyMultiple - B | ✅ |
+| DS-WPM-B | Data Sharing - WritePropertyMultiple - B | ✅ (beyond the profile) |
 | DS-COV-B | Data Sharing - COV - B | ✅ |
-| AE-LS-B | Alarm and Event - Life Safety - B | ⚠ part: CHANGE_OF_LIFE_SAFETY notifications work; LifeSafetyOperation (silence/reset) is not executed - see above |
-| AE-ACK-B | Alarm and Event - ACK - B | ✅ configured; not verified |
-| AE-INFO-B | Alarm and Event - Information - B | ✅ configured; not verified |
+| AE-LS-B | Alarm and Event - Life Safety - B | ✅ `CHANGE_OF_LIFE_SAFETY` notifications and LifeSafetyOperation (silence / unsilence / reset) - Wire Tested |
+| AE-ACK-B | Alarm and Event - ACK - B | ✅ Wire Tested |
+| AE-INFO-B | Alarm and Event - Information - B | ✅ Wire Tested |
 | DM-DDB-A | Device Management - Dynamic Device Binding - A (initiate) | ✅ |
 | DM-DDB-B | Device Management - Dynamic Device Binding - B (answer) | ✅ |
 | DM-DOB-B | Device Management - Dynamic Object Binding - B | ✅ |
 | DM-DCC-B | Device Management - Device Communication Control - B | ✅ |
-| DM-TS-B | Device Management - Time Synchronization - B | ✅ |
-| DM-UTC-B | Device Management - UTC Time Synchronization - B | ✅ |
-| DM-RD-B | Device Management - Reinitialize Device - B | ✅ (cold/warm start) |
+| DM-TS-B | Device Management - Time Synchronization - B | ✅ (beyond the profile) |
+| DM-UTC-B | Device Management - UTC Time Synchronization - B | ✅ (beyond the profile) |
+| DM-RD-B | Device Management - Reinitialize Device - B | ✅ (cold/warm start; beyond the profile) |
 
 ### Services (executed / B-side)
 
 | Service | Notes |
 |---------|-------|
 | ReadProperty / ReadPropertyMultiple | Responds to property reads (DS-RP-B / DS-RPM-B). |
-| WriteProperty / WritePropertyMultiple | Accepts writes to the commandable outputs and to Amber's/Azure's `Present_Value` and `Mode` (DS-WP-B / DS-WPM-B). |
+| WriteProperty / WritePropertyMultiple | Accepts writes to the commandable outputs and to Amber's/Azure's `Mode` (DS-WP-B / DS-WPM-B). `Present_Value` of Amber/Azure is read-only (Table 12-18): `write-access-denied`. |
 | SubscribeCOV | Bronze's and Amber's `Present_Value` are subscribable (DS-COV-B). |
-| ConfirmedEventNotification / UnconfirmedEventNotification | Sent when Amber/Azure transition (AE-LS-B). The recipient is the local subnet broadcast, unconfirmed. |
-| AcknowledgeAlarm | Accepts an operator acknowledgement (AE-ACK-B). |
-| GetEventInformation | Reports active events (AE-INFO-B). |
+| ConfirmedEventNotification | Sent to Device 389107 when Amber/Azure change event state (AE-LS-B), retried up to `Number_Of_APDU_Retries` (3) times. |
+| LifeSafetyOperation | Silence / unsilence (audible, visual, both) and reset (AE-LS-B). Compiled in by `CMakeLists.txt` - see [Build](#build). |
+| AcknowledgeAlarm | Accepts an operator acknowledgement; the stack sends the `ACK_NOTIFICATION` (AE-ACK-B). |
+| GetEventInformation | Lists active and unacknowledged events (AE-INFO-B). |
 | Who-Is / I-Am | Answers Who-Is with I-Am, and broadcasts an I-Am on start-up (DM-DDB-B); also broadcasts a Who-Is on start-up (DM-DDB-A). |
 | Who-Has / I-Have | Answers Who-Has with I-Have (DM-DOB-B). |
 | DeviceCommunicationControl | Enable / disable-initiation, password-gated (DM-DCC-B). |
 | ReinitializeDevice | Cold/warm start; SimpleACKs then actually restarts (DM-RD-B). |
 | TimeSynchronization / UTCTimeSynchronization | Accepted (DM-TS-B / DM-UTC-B). |
-| LifeSafetyOperation | Implemented in `main.cpp` and registered, but **not enabled**: the default stack build does not compile it - see [TODO.md #2](TODO.md). AE-LS-B, which this profile requires, includes executing it (K.2.13). |
-
 ### Object types
 
 | Object type | Instance | Name |
@@ -148,11 +179,16 @@ The licence is what lets you *build* it.
 
 This is a **self-contained** project. It ships:
 
-- `main.cpp` - the example device.
+- `main.cpp` - the example device. Section 1b is the smoke detector
+  **Simulation**.
+- `simulation/` - the Wire Tests' loopback-only test control channel to the
+  simulated detector (**Simulation**, off unless `BLSC_SIMULATION_CONTROL_PORT`
+  is set; a real product deletes it).
 - `common/` - the shared helper (UDP, callbacks, CLI, keyboard) vendored in.
-- `CMakeLists.txt` - the build, the same on Windows, Linux, and macOS.
+- `CMakeLists.txt` - the build, the same on Windows, Linux, and macOS. It also
+  turns on the stack's LifeSafetyOperation service (see [Build](#build)).
 - `docs/PICS.md` - the conformance statement.
-- `TODO.md` - the engineering detail behind the status callout above.
+- `TODO.md` - the known gaps, with their evidence.
 - `tests/` - the Wire Tests (see [Wire Tests](#wire-tests)), and `wiretest/`, the
   series' shared Python harness they are written against (vendored, like `common/`).
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack as a git submodule**
@@ -164,6 +200,7 @@ This is a **self-contained** project. It ships:
 - A C++17 compiler (MSVC, GCC, or Clang).
 - CMake >= 3.15.
 - Git (to fetch the stack submodule).
+- Python 3 (standard library only) to run the Wire Tests.
 
 ### Windows
 
@@ -203,6 +240,25 @@ This uses the adapter's default **SOURCE** mode: the stack's `source/*.cpp`
 is compiled straight into the executable, so there is no library or DLL to
 build, ship, or install first, and the build is identical on every platform.
 
+**LifeSafetyOperation needs a stack build option.** AE-LS-B executes
+LifeSafetyOperation, and the stack compiles that service only when
+`STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` is defined - its documented public
+toggle (`CASBACnetStackOptions.h`); the default `STACK_OPTION_TARGET_FULL`
+preset leaves it off. In SOURCE mode `CMakeLists.txt` defines it for you. If
+you link a prebuilt stack instead (`-D CAS_BACNET_STACK_LINK=STATIC` or `DLL`),
+build that library with the option, e.g. on Windows from the examples-series
+folder:
+
+```bash
+CL=-DSTACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION tools/build-stack-static.sh BACnetProfileExample-B-LSC-CPP
+```
+
+(`-D`, not `/D`: Git Bash rewrites `/D...` into a path. If the library was
+already built, rebuild it from clean - msbuild does not notice a changed `CL`.)
+A stack built without it makes the example stop at start-up with
+`Error: Failed to enable the LifeSafetyOperation (AE-LS-B) ...` rather than
+advertise a service it cannot execute.
+
 ## Run
 
 ```bash
@@ -213,26 +269,29 @@ build, ship, or install first, and the build is identical on every platform.
 .\build\Release\BACnetExampleBLSC.exe
 ```
 
-Expected output (captured from a real build of this documented command):
+Expected output (captured from a real build, here with `--port 48065`):
 
 ```
-BACnet B-LSC (Life Safety Controller) Example - C++ v1.1.0
+BACnet B-LSC (Life Safety Controller) Example - C++ v1.2.0
 CAS BACnet Stack version: 6.0.23.0
 Common helper (common/) version: 3.4.0
-FYI: Listening for BACnet/IP on UDP port 47808 (Network Port 1).
-::CASBACnetStack::BACnetInterface::RegisterCallbackLifeSafetyOperation() ... - FYI: This feature was not compiled. To enable, re-compile the CAS BACnet Stack with this defined: STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION
-TX 21 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1) - Unconfirmed: I-Am
-TX 8 bytes to 192.168.3.255:47808 (broadcast) (Network Port 1) - Unconfirmed: Who-Is
+FYI: Listening for BACnet/IP on UDP port 48065 (Network Port 1).
+TX 21 bytes to 192.168.3.255:48065 (broadcast) (Network Port 1) - Unconfirmed: I-Am
+TX 8 bytes to 192.168.3.255:48065 (broadcast) (Network Port 1) - Unconfirmed: Who-Is
 FYI: Device 389007 ("Chipkin Example B-LSC") ready. Vendor ID 389. Press 'h' for help.
+RX 21 bytes from 192.168.3.64:48065 (Network Port 1) - Unconfirmed: I-Am
+TX 20 bytes to 192.168.3.255:48065 (broadcast) (Network Port 1) - Unconfirmed: Who-Is DNET=65535
 ```
 
-The first `TX` line is the start-up I-Am the device broadcasts to announce
-itself; the second is the start-up Who-Is (DM-DDB-A). Both go to the **local
+The first two `TX` lines are the start-up I-Am the device broadcasts to
+announce itself and the start-up Who-Is (DM-DDB-A). Both go to the **local
 subnet broadcast** address (computed from the Network Port's interface), not
-the global `255.255.255.255`. As clients talk to the device you'll see
-`RX ... bytes from ...` and `TX ... bytes to ...` lines showing the traffic.
-The `RegisterCallbackLifeSafetyOperation` line is expected - see the status
-callout above and [TODO.md #2](TODO.md).
+the global `255.255.255.255`. The `RX ... I-Am` is the device hearing its own
+broadcast. The `Who-Is DNET=65535` is the stack looking for **Device 389107**,
+the operator workstation Notification Class 1 sends alarms to: until a device
+with that instance answers (or announces itself with an I-Am) the alarms have
+nowhere to go. As clients talk to the device you'll see `RX ... bytes from ...`
+and `TX ... bytes to ...` lines showing the traffic.
 
 The device listens on UDP **47808** (BACnet/IP). Allow that port through your
 firewall. To use a different port, pass `--port` (see below).
@@ -262,8 +321,20 @@ While the example runs, these keys are available:
 | up arrow | Increase Analog Input 1 (`Bronze`) by 1.1 (also feeds its COV subscribers). |
 | down arrow | Decrease Analog Input 1 (`Bronze`) by 1.1 (also feeds its COV subscribers). |
 
-To fire a life-safety alarm, WriteProperty Amber's or Azure's `Present_Value`
-to `2` (alarm) or `3` (fault); write `0` to clear either.
+There is no detector key. The **Simulation**'s smoke detector is moved through
+the loopback test control channel, which is off unless you start the example
+with `BLSC_SIMULATION_CONTROL_PORT` set (Linux:
+`BLSC_SIMULATION_CONTROL_PORT=47809 ./build/BACnetExampleBLSC`). Then send it
+one plain-text UDP datagram per command, from the same host:
+
+| Command | Reply | The detector |
+|---------|-------|--------------|
+| `detector smoke` | `ok` | sees smoke - Amber and Azure go to alarm and latch |
+| `detector quiet` | `ok` | the smoke has cleared / the head is back on its base |
+| `detector fault` | `ok` | its head is pulled off its base |
+| `detector` | `detector <smoke\|quiet\|fault>` | (just reports) |
+
+For example, on Linux: `echo -n "detector smoke" | nc -u -w1 127.0.0.1 47809`.
 
 ## Verify
 
@@ -283,37 +354,45 @@ Use a BACnet client such as the
    answer. WriteProperty a commandable output's `Present_Value` at a
    priority, re-read it and its `Priority_Array`, then write `NULL` to
    relinquish and confirm it falls back to `Relinquish_Default`.
-4. **Life-safety alarming** - WriteProperty Amber's `Present_Value` to `2`
-   (alarm), confirm `Event_State` becomes `life-safety-alarm` and a
-   `CHANGE_OF_LIFE_SAFETY` `EventNotification` is broadcast; write `3` for
-   `fault`; write `0` to return to normal. (Checked over the wire at
-   `64b2cfac5`.)
+4. **Life-safety alarming** - give your client the device instance **389107**
+   (or change `RECIPIENT_DEVICE_INSTANCE` in `main.cpp` to your client's), start
+   the example with the test control channel on, and send `detector smoke`.
+   Your client receives a `CHANGE_OF_LIFE_SAFETY` ConfirmedEventNotification
+   (to `life-safety-alarm`) for Amber and for Azure. Silence it with
+   LifeSafetyOperation `silence`, acknowledge it, send `detector quiet`, and
+   reset it with LifeSafetyOperation `reset`; try `reset` before the smoke
+   clears and see it refused. [tests/life_safety_test.py](tests/life_safety_test.py)
+   does exactly this.
 5. **Device management** - DeviceCommunicationControl
    `disable-initiation`/`enable`; ReinitializeDevice `COLDSTART` (confirm a
    SimpleACK, then that the device actually restarts and re-announces with
    an I-Am); TimeSynchronization / UTCTimeSynchronization are accepted.
 
-For a property-by-property review against the conformance statement, and for
-what is and is not exercised end-to-end, see [TUTORIAL.md](TUTORIAL.md) and
-[docs/PICS.md](docs/PICS.md).
+For a property-by-property review against the conformance statement, see
+[TUTORIAL.md](TUTORIAL.md) and [docs/PICS.md](docs/PICS.md).
 
 ## Wire Tests
 
-Discovery, automated: a Python BACnet client drives the running example over
-BACnet/IP from outside it, the way a client discovers a device - Who-Is, the
-Device's `Object_List`, then for every object its `Property_List` and a
-ReadProperty of every property it lists. Every read must come back as a value; an
-Error, Reject or Abort fails the run. Python 3 standard library only:
+Automated, from outside the example: Python 3 (standard library only) starts
+the example with its test control channel on, plays the **operator
+workstation** (Device 389107, the Peer) over BACnet/IP, and plays the physical
+world through the control channel. Each check fails when the function it
+proves is removed - every one was mutation-verified (see `CHANGELOG.md`).
+
+| Script | What it proves |
+|--------|----------------|
+| `discovery_test.py` | Who-Is, `Object_List`, and a ReadProperty of every property every object lists. |
+| `life_safety_test.py` | The scenario: smoke -> latched alarm -> ConfirmedEventNotifications to Device 389107 (and not to a stranger) -> GetEventInformation -> RESET refused while the smoke is there -> SILENCE -> AcknowledgeAlarm + ACK_NOTIFICATION -> smoke clears, the latch holds -> RESET -> return to normal. Failure Modes: reset refused (twice), an unacknowledged alarm stays listed. Reports Zone_Members as a `[KNOWN GAP]`. |
+| `fault_test.py` | Failure Mode: a detector fault -> Reliability `MULTI_STATE_FAULT`, `FAULT` flag and event state, to-fault notification; `RESET_FAULT` refused; repaired -> return to normal. |
 
 ```bash
 python3 tests/run_wire_tests.py --exe build/BACnetExampleBLSC          # Linux/macOS
 python tests\run_wire_tests.py --exe build\Release\BACnetExampleBLSC.exe   # Windows
 ```
 
-It ends with `ALL WIRE TESTS PASSED` (exit 0). CI runs it on Linux after the
-smoke test. [tests/README.md](tests/README.md) says what each check proves. It
-does not test the life-safety alarms yet.
-
+It ends with `ALL WIRE TESTS PASSED` (exit 0). The example uses `--port` and
+`--port` + 1 (the control channel). [tests/README.md](tests/README.md) says
+what each check proves.
 
 ## The BACnet profile example series
 

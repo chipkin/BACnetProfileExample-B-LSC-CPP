@@ -4,88 +4,73 @@
 // =============================================================================
 // BACnet Profile Example - B-LSC (Life Safety Controller) - C++
 //
-// This example implements as much of the BACnet "B-LSC" (Life Safety Controller)
-// device profile as the CAS BACnet Stack's CUSTOMER-FACING API supports today. It
-// is seeded from B-AAC (Advanced Application Controller) MINUS B-AAC's Schedule +
-// Calendar objects (that demo is not part of the B-LSC profile), and ADDS the two
-// life-safety object types plus a LifeSafetyOperation responder.
+// THE PROFILE FUNCTION (ANSI/ASHRAE 135-2024, Annex L.5.2): "A B-LSC device
+// performs life safety alarm detection and control. It supports life safety
+// objects." Its Alarm and Event Management requirements are "Generation of
+// alarm / event notifications, including life safety alarms and the ability to
+// direct them to recipients", "Execution of all forms of life safety
+// operations", "Maintain a list of unacknowledged alarms / events" and
+// "Notifying other recipients that the acknowledgment has been received".
 //
-// A B-LSC (ANSI/ASHRAE 135, Annex L.5) must support:
+// WHAT THIS EXAMPLE DOES WITH IT (README.md "The scenario"):
 //
-//     DS-RP-B, DS-RPM-B   - ReadProperty + ReadPropertyMultiple,
-//     DS-WP-B, DS-WPM-B   - WriteProperty + WritePropertyMultiple,
-//     DS-COV-B            - SubscribeCOV,
-//     AE-LS-B             - generate CHANGE_OF_LIFE_SAFETY event notifications,
-//     AE-ACK-B            - accept AcknowledgeAlarm,
-//     AE-INFO-B           - answer GetEventInformation,
+//   1. A smoke detector - SIMULATION, section 1b - sees smoke. Life Safety
+//      Point 1 "Amber" (the detector) follows it: Tracking_Value goes to
+//      alarm(2) at once, and Present_Value LATCHES alarm. Life Safety Zone 1
+//      "Azure" (the detector's zone) rolls the point up the same way.
+//   2. The stack's CHANGE_OF_LIFE_SAFETY algorithm puts both objects in the
+//      LIFE_SAFETY_ALARM event state and sends a ConfirmedEventNotification to
+//      the operator workstation, Device 389107, named in Notification Class 1
+//      "Crimson"'s Recipient_List (the stack finds its address from its I-Am).
+//   3. The operator silences the sounders (LifeSafetyOperation SILENCE),
+//      acknowledges the alarm (AcknowledgeAlarm - every recipient then gets an
+//      ACK_NOTIFICATION), and once the smoke has cleared resets the latch
+//      (LifeSafetyOperation RESET) - the return to normal is notified too.
+//
+//   Failure Modes, each shown by a Wire Test (tests/):
+//   - RESET while the detector still sees smoke is refused, OBJECT /
+//     INVALID_OPERATION_IN_THIS_STATE (cl. 13.13.1.3.1 / 13.13.2), and the
+//     latch holds. So is a RESET of a point that is not latched.
+//   - A detector fault (its head pulled off the base) drives Reliability to
+//     MULTI_STATE_FAULT and the object to the FAULT event state (the stack's
+//     FAULT_LIFE_SAFETY algorithm, cl. 13.4), notified to-fault.
+//   - An alarm nobody acknowledges stays in GetEventInformation's list.
+//
+// The BACnet Surface is the B-LSC profile's BIBBs (README.md has the table):
+//
+//     DS-RP-B, DS-WP-B    - ReadProperty, WriteProperty (Mode is writable),
+//     DS-COV-B            - SubscribeCOV (Amber's and Bronze's Present_Value),
+//     AE-LS-B             - CHANGE_OF_LIFE_SAFETY notifications + executing
+//                           LifeSafetyOperation (silence / unsilence / reset),
+//     AE-ACK-B            - AcknowledgeAlarm,
+//     AE-INFO-B           - GetEventInformation,
 //     DM-DDB-A,B, DM-DOB-B - Who-Is/I-Am (answer + initiate on start-up), Who-Has/I-Have,
-//     DM-DCC-B            - DeviceCommunicationControl,
-//     DM-TS-B / DM-UTC-B  - TimeSynchronization / UTCTimeSynchronization,
-//     DM-RD-B             - ReinitializeDevice.
+//     DM-DCC-B            - DeviceCommunicationControl.
+//   It also keeps, from the B-AAC base it was seeded from, ReadPropertyMultiple,
+//   WritePropertyMultiple, Time/UTCTimeSynchronization and ReinitializeDevice
+//   (README.md says which are beyond the profile's table).
 //
-// WHAT IS NOT IMPLEMENTED (see README.md "What this example does NOT do" + TODO.md):
-//   - (Fixed at stack 6.x @ 64b2cfac5.) Up to stack abd4cee1, Life Safety
-//     Point 1 "Amber" and Life Safety Zone 1 "Azure" answered unknown-object
-//     for every property but Object_Identifier/Object_Type, because
-//     BACnetStack_AddObject did not create the stack's internal life-safety
-//     object. Since stack #2187 the stack falls through to this file's own
-//     GetProperty*/SetProperty* callbacks: at 64b2cfac5 every listed property
-//     reads, and a WriteProperty of Present_Value raises the intrinsic
-//     CHANGE_OF_LIFE_SAFETY event (checked over the wire, 2026-10-15). Stack
-//     issue #2036 (customer AddLifeSafetyPointObject/AddLifeSafetyZoneObject
-//     exports) stays open: the stack's own life-safety engine and Zone_Members
-//     (next item) are still out of reach of the customer interface.
-//   - Life Safety Zone 1 "Azure"'s Zone_Members: this is a required (cl. 12.16)
-//     BACnetLIST of BACnetDeviceObjectReference - a constructed, variable-length
-//     type. The only customer-facing callback that can serve an arbitrary
-//     constructed property, BACnetStack_RegisterCallbackGetPropertyConstructed,
-//     was moved to the stack's test-tool header (forbidden by this series - see
-//     PR #193's review comment in CASBACnetStackDLL.h). See
-//     TODO.md for the export name and the filed stack issue.
-//   - The stack's OWN Life Safety Point/Zone engine (BACnetStackLifeSafetyObject /
-//     BACnetStackLifeSafetyPoint / BACnetStackLifeSafetyZone in the stack's
-//     source, cl. 12.15/12.16's Mode/Accepted_Modes/Tracking_Value-latching/
-//     Silenced/zone-roll-up state machine) is real but its configuration surface
-//     (AddLifeSafetyPointObject, AddLifeSafetyZoneObject, SetLifeSafetyZoneMembers,
-//     SetLifeSafetyAcceptedModes/AlarmValues/FaultValues/LifeSafetyAlarmValues,
-//     and the SetLifeSafetyTrackingValue "physical input" seam) is internal to
-//     BACnetDBDevice and is NOT exported through CASBACnetStackDLL.h - grepped at
-//     the pin, zero `DllExport` hits for any of those names. This example
-//     therefore does NOT use that engine: like every OTHER object in this file,
-//     Life Safety Point 1 ("Amber") and Life Safety Zone 1 ("Azure") are built the
-//     same generic way as Bronze/Chartreuse/Diamond in the rest of this series -
-//     BACnetStack_AddObject() plus this file's own Get/Set callbacks holding the
-//     object's state - and their alarming is driven by the customer-facing
-//     BACnetStack_SetIntrinsicChangeOfLifeSafetyAlgorithm /
-//     BACnetStack_SetFaultLifeSafetyAlgorithm, which (per their own doc comments
-//     and BACnetDBDevice::EnableIntrinsicChangeOfLifeSafetyAlgorithm) watch
-//     whatever Present_Value the object reports, exactly like Analog Value
-//     "Diamond"'s OutOfRange algorithm in B-AAC. Simplification versus the real
-//     engine: Present_Value and Tracking_Value move together here (this example
-//     has no separate "latch" step), and Mode is accepted unconditionally rather
-//     than validated against a host-configured Accepted_Modes (Accepted_Modes has
-//     no customer-facing setter either, so an empty/default Accepted_Modes here
-//     would - per the stack's own literal reading of cl. 12.15.13 - accept NO
-//     Mode write at all, which would fail DM's own writability expectation).
-//   - LifeSafetyOperation (service 37) is not ENABLED (Protocol_Services_Supported
-//     bit left off), confirmed by running the built binary: the linked static
-//     library was compiled from the stack's own project file without
-//     STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION (not part of the
-//     STACK_OPTION_TARGET_FULL preset this whole series builds with), so
-//     BACnetStack_RegisterCallbackLifeSafetyOperation() logs "This feature was
-//     not compiled" at start-up. The callback below is still registered
-//     (harmless, forward-compatible), but the service is left disabled rather
-//     than advertised-and-broken. AE-LS-B, which this profile requires, includes
-//     executing LifeSafetyOperation (135-2024 K.2.13), so until the option is on
-//     this example meets AE-LS-B only in part. The option can be defined by this
-//     example's own CMakeLists.txt (target_compile_definitions on the adapter
-//     target, as B-LS-CPP does for WriteGroup); no stack edit is needed. See
-//     TODO.md #2.
+// LifeSafetyOperation (service 37) is compiled in by this example's own
+// CMakeLists.txt: STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION is the stack's
+// documented public toggle for it (CASBACnetStackOptions.h) and the default
+// STACK_OPTION_TARGET_FULL preset leaves it off. A STATIC/DLL build must link a
+// stack library built with that option - see README.md "Building".
 //
-// The device keeps the B-ASC/B-SA objects (three read-only inputs + three
-// commandable outputs + Network Port) and ADDS Life Safety Point 1, Life Safety
-// Zone 1, and the Notification Class that routes their alarms. Each object has a
-// colour name (the convention shared across this example series):
+// WHAT IS NOT IMPLEMENTED (README.md + TODO.md):
+//   - Life Safety Zone 1 "Azure"'s Zone_Members (cl. 12.16.26) reads an EMPTY
+//     list. It should name Amber - main.cpp rolls Amber up into Azure - but
+//     the customer interface has no way to fill it (stack #2036, open). [KNOWN GAP]
+//   - The stack's OWN Life Safety Point/Zone engine (Mode / Accepted_Modes /
+//     latching / zone roll-up) is not exported to the customer interface
+//     (stack #2036). Like every other object here, Amber and Azure are
+//     BACnetStack_AddObject() plus this file's Get/Set callbacks holding their
+//     state; the stack's intrinsic CHANGE_OF_LIFE_SAFETY and FAULT_LIFE_SAFETY
+//     algorithms watch the Present_Value those callbacks report. Mode is
+//     accepted unconditionally rather than checked against Accepted_Modes
+//     (which has no customer setter either).
+//
+// Each object has a colour name (the convention shared across this example
+// series):
 //
 //     Device 389007            "Chipkin Example B-LSC"     (instance configurable with --deviceID)
 //     Analog Input  1          "Bronze"      (REAL, degrees Celsius; read-only)
@@ -94,9 +79,9 @@
 //     Analog Output 1          "Chartreuse"  (REAL setpoint; WRITABLE, commandable)
 //     Binary Output 1          "Fuchsia"     (active / inactive; WRITABLE, commandable)
 //     Multi-State Output 1     "Indigo"      (state 1..3; WRITABLE, commandable)
-//     Life Safety Point 1      "Amber"       (BACnetLifeSafetyState; intrinsic ChangeOfLifeSafety + fault)
-//     Life Safety Zone 1       "Azure"       (BACnetLifeSafetyState; intrinsic ChangeOfLifeSafety + fault)
-//     Notification Class 1     "Crimson"     (routes Amber's/Azure's alarms)
+//     Life Safety Point 1      "Amber"       (the smoke detector; CHANGE_OF_LIFE_SAFETY + FAULT_LIFE_SAFETY)
+//     Life Safety Zone 1       "Azure"       (the detector's zone; the same two algorithms)
+//     Notification Class 1     "Crimson"     (routes Amber's/Azure's alarms to Device 389107)
 //     Network Port 1           "Vermilion"   (the BACnet/IP port - required)
 //
 // Output objects are COMMANDABLE: their Present_Value is driven by a 16-slot
@@ -104,52 +89,32 @@
 // slot; writing NULL relinquishes it; the stack reports the highest-priority
 // non-null slot (or Relinquish_Default) as the effective Present_Value.
 //
-// F-ALARM-LS / F-LIFESAFETY: Life Safety Point 1 ("Amber") and Life Safety Zone 1
-// ("Azure") each carry an intrinsic ChangeOfLifeSafety event algorithm (armed by
-// BACnetStack_SetIntrinsicChangeOfLifeSafetyAlgorithm - "alarm"(2) drives the
-// object to LIFE_SAFETY_ALARM) and a fault algorithm (armed by
-// BACnetStack_SetFaultLifeSafetyAlgorithm - "fault"(3) drives it to FAULT). Both
-// algorithms only monitor Present_Value once BACnetStack_UpdateValue is called for
-// it (see the comment on that function in CASBACnetStackDLL.h - "REQUIRED...a host
-// that never calls it will never generate an event notification"), so every write
-// to Present_Value below calls it. As in B-AAC's Diamond, Present_Value here is
-// made WRITABLE beyond what the profile strictly requires (Table 12-18 marks it
-// read-only) purely so this tutorial has a WriteProperty-shaped way to simulate the
-// physical alarm input; a product with a real smoke/pull-station input would drive
-// Present_Value from hardware instead and leave WriteProperty rejected.
+// Both life-safety algorithms only look at Present_Value once
+// BACnetStack_UpdateValue is called for it (see that function's comment in
+// CASBACnetStackDLL.h - "a host that never calls it will never generate an event
+// notification"), so every change to Amber's or Azure's state below calls it.
+// The same call feeds Amber's COV subscribers (DS-COV-B). Present_Value is
+// read-only, as Table 12-18 says: only the detector and LifeSafetyOperation move it.
 //
 // F-REINIT (DM-RD-B): unchanged from B-AAC/B-ASC - see ReinitializeDevice() and the
 // deferred-restart block in the main loop. B-LSC is this series' canonical copy
 // source for F-REINIT; the comments below are written for that.
 //
-// DS-COV-B: Analog Input 1 ("Bronze") and Life Safety Point 1 ("Amber")
-// Present_Value are subscribable (BACnetStack_SetPropertySubscribable);
-// BACnetStack_SetCOVSettings/SetMaxActiveCOVSubscriptions bound the subscription
-// table. As with the intrinsic algorithms, a COV subscriber is notified only when
-// BACnetStack_UpdateValue is called for the changed property - the up/down key
-// (Bronze) and a Present_Value WriteProperty (Amber) both do this already.
-//
-// AE-LS-B's LifeSafetyOperation responder (BACnetStack_RegisterCallbackLifeSafetyOperation)
-// applies `silence`/`unsilence`(+_AUDIBLE/_VISUAL)/`reset`(+_ALARM/_FAULT) to this
-// file's own Silenced/Present_Value state for Amber and Azure - see
-// LifeSafetyOperation() below.
-//
 // To be a conformant BACnet device (Protocol_Revision 30) each object must
 // expose its full set of REQUIRED properties. Most are generated by the stack
 // (Object_Identifier, Object_Type, Status_Flags, Object_List, Protocol_*).
 // Event_State is subtle here: for the objects with NO alarming it just reads its
-// datatype default of normal(0) (correct by coincidence, not computed). But this
-// example ARMS intrinsic ChangeOfLifeSafety + fault algorithms on Amber and Azure
-// below, and for those objects the stack genuinely COMPUTES Event_State from the
-// algorithm. The handful of properties the application must supply are served by
-// the Get*Property callbacks below, and a few are turned on with SetPropertyEnabled.
+// datatype default of normal(0) (correct by coincidence, not computed). For Amber
+// and Azure the stack genuinely COMPUTES Event_State from the two algorithms.
+// The handful of properties the application must supply are served by the
+// Get*Property callbacks below, and a few are turned on with SetPropertyEnabled.
 //
 // Interactive keys (handled by the shared helper): h = help, q = quit, up/down =
-// nudge Analog Input 1 by +/-1.1 (also feeds its COV subscribers). To fire a life-
-// safety alarm, WriteProperty Amber's or Azure's Present_Value to 2 (alarm); to
-// fire a fault, write 3 (fault); write 0 (quiet) to clear either. This mirrors
-// B-AAC's Diamond WriteProperty-to-alarm demo rather than claiming a new
-// interactive key (see docs/menu-keys.md - no life-safety key is claimed there).
+// nudge Analog Input 1 by +/-1.1 (also feeds its COV subscribers). There is no
+// detector key (docs/menu-keys.md claims none for life safety): the Wire Tests
+// move the simulated detector through the loopback-only test control channel
+// (simulation/SimulationControl.h), which is off unless
+// BLSC_SIMULATION_CONTROL_PORT is set.
 // Command line: --port <n>, --deviceID <n>.
 //
 // All the UDP/stack plumbing lives in common/CASExampleHelper so this file can
@@ -161,6 +126,7 @@
 #include "CASBACnetStackAdapter.h" // the CAS BACnet Stack C API (BACnetStack_*); call
                                     // LoadBACnetFunctions() before any BACnetStack_* call -
                                     // see the top of main() below.
+#include "simulation/SimulationControl.h" // SIMULATION only: the Wire Tests' detector back door
 
 #include <stdio.h>
 #include <string.h>
@@ -179,7 +145,7 @@ using namespace CASBACnetStackExampleConstants;
 // 1. Example + device configuration
 // -----------------------------------------------------------------------------
 static const char* APP_NAME = "BACnet B-LSC (Life Safety Controller) Example - C++";
-static const char* APP_VERSION = "1.1.0";
+static const char* APP_VERSION = "1.2.0";
 
 // The device instance. BACnet requires this to be configurable, so it defaults
 // to 389007 (docs/colour-table.md) and can be overridden on the command line
@@ -215,9 +181,9 @@ static const char* DEVICE_NAME = "Chipkin Example B-LSC";
 // product's own.
 static const char* DEVICE_DESCRIPTION =
     "Chipkin CAS BACnet Stack example - B-LSC (Life Safety Controller) profile. "
-    "Demonstrates DS-RP/RPM/WP/WPM-B, DS-COV-B, life-safety intrinsic alarming "
-    "(AE-LS-B / AE-ACK-B / AE-INFO-B), LifeSafetyOperation, DM-DCC-B, DM-RD-B, "
-    "and time synchronisation.";
+    "A SIMULATED smoke detector (Life Safety Point 1) and its zone raise life-safety "
+    "alarms to an operator workstation, which silences, acknowledges and resets them "
+    "(AE-LS-B / AE-ACK-B / AE-INFO-B).";
 
 // Device identity strings (read by clients, and used to populate I-Am).
 // VENDOR_NAME must match VENDOR_IDENTIFIER above - your company name, not
@@ -299,11 +265,10 @@ static Commandable g_binaryOutput = { { false }, { 0 }, 0.0 };  // default inact
 static Commandable g_multiStateOutput = { { false }, { 0 }, 1.0 }; // default state 1
 
 // --- Life Safety Point/Zone + their Notification Class (the B-LSC additions) ---
-// Life Safety Point 1 "Amber" and Life Safety Zone 1 "Azure" each carry an
-// intrinsic ChangeOfLifeSafety event algorithm plus a fault algorithm. Present_Value
-// is a BACnetLifeSafetyState enum (see BACnetLifeSafetyState.h at the pin):
-// quiet(0) is the only non-alarm/fault state this example ever reports; alarm(2)
-// and fault(3) are what a client WriteProperty's to demo the algorithms.
+// Life Safety Point 1 "Amber" is the smoke detector; Life Safety Zone 1 "Azure"
+// is the zone it sits in. Present_Value and Tracking_Value are
+// BACnetLifeSafetyState values (BACnetLifeSafetyState.h at the pin): this example
+// uses quiet(0), alarm(2) and fault(3).
 static const uint32_t LIFE_SAFETY_POINT_INSTANCE = 1;   // "Amber"
 static const uint32_t LIFE_SAFETY_ZONE_INSTANCE = 1;    // "Azure"
 static const uint32_t LIFE_SAFETY_STATE_QUIET = 0;
@@ -311,22 +276,54 @@ static const uint32_t LIFE_SAFETY_STATE_ALARM = 2;
 static const uint32_t LIFE_SAFETY_STATE_FAULT = 3;
 static const uint32_t LIFE_SAFETY_MODE_ON = 1;           // BACnetLifeSafetyMode default we report
 
-// Present_Value/Tracking_Value/Mode/Silenced/Operation_Expected for each object -
-// see the file header comment for why this example holds this state itself
-// instead of the stack's internal (not customer-exported) life-safety engine.
-static uint32_t g_lifeSafetyPointValue = LIFE_SAFETY_STATE_QUIET;   // Amber
-static uint32_t g_lifeSafetyPointMode = LIFE_SAFETY_MODE_ON;
-static bool g_lifeSafetyPointSilencedAudible = false;
-static bool g_lifeSafetyPointSilencedVisual = false;
-static uint32_t g_lifeSafetyZoneValue = LIFE_SAFETY_STATE_QUIET;    // Azure
-static uint32_t g_lifeSafetyZoneMode = LIFE_SAFETY_MODE_ON;
-static bool g_lifeSafetyZoneSilencedAudible = false;
-static bool g_lifeSafetyZoneSilencedVisual = false;
+// The state of one life-safety object, held by this example (see the file header
+// for why not by the stack). The rules that move it - the "logic internal to the
+// device" that cl. 12.15 / 12.16 leave a local matter - are in
+// ApplyDetectorReading() and LifeSafetyOperation() below:
+//
+//   trackingValue  follows the detector continuously (cl. 12.15.5).
+//   presentValue   LATCHES alarm: smoke sets it to alarm, and it stays alarm after
+//                  the smoke clears until an operator RESETs it (cl. 12.15.4 "may
+//                  latch non-NORMAL state values until reset"). A fault is not
+//                  latched: it follows the detector, and clears when the detector
+//                  is repaired - an alarm already latched wins over it.
+//   silenced*      the sounders (audible) and strobes (visual); a new alarm
+//                  unsilences both, LifeSafetyOperation SILENCE* sets them.
+struct LifeSafetyObjectState {
+    uint32_t trackingValue;
+    uint32_t presentValue;
+    uint32_t mode;
+    bool silencedAudible;
+    bool silencedVisual;
+};
+static const LifeSafetyObjectState LIFE_SAFETY_POWER_ON_STATE = {
+    LIFE_SAFETY_STATE_QUIET, LIFE_SAFETY_STATE_QUIET, LIFE_SAFETY_MODE_ON, false, false };
+static LifeSafetyObjectState g_lifeSafetyPoint = LIFE_SAFETY_POWER_ON_STATE;  // Amber
+static LifeSafetyObjectState g_lifeSafetyZone = LIFE_SAFETY_POWER_ON_STATE;   // Azure
+
+// -----------------------------------------------------------------------------
+// 1b. SIMULATION: the smoke detector
+//
+// Everything in this section stands in for hardware. On a real panel the
+// detector loop card reports what each detector sees - quiet, smoke, or a fault
+// on its wiring - and that reading is what Amber's Tracking_Value follows. Here
+// the reading is a variable, and the only thing that moves it is the Wire Tests'
+// loopback-only control channel (simulation/SimulationControl.h; off unless
+// BLSC_SIMULATION_CONTROL_PORT is set):
+//
+//     detector quiet     -> ok        the smoke has cleared / the head is back
+//     detector smoke     -> ok        the detector sees smoke
+//     detector fault     -> ok        the head is pulled off its base
+//     detector           -> detector <quiet|smoke|fault>
+//
+// Nothing on the BACnet network can move it: Present_Value and Tracking_Value
+// are read-only (Table 12-18), so a client cannot fake an alarm.
+// -----------------------------------------------------------------------------
+static uint32_t g_detectorReading = LIFE_SAFETY_STATE_QUIET;   // SIMULATION: what the detector sees
 
 // The values that drive each intrinsic algorithm (passed to
 // BACnetStack_SetIntrinsicChangeOfLifeSafetyAlgorithm / SetFaultLifeSafetyAlgorithm
-// at start-up, and reused here to classify a LifeSafetyOperation RESET_ALARM/
-// RESET_FAULT request - see LifeSafetyOperation() below).
+// at start-up).
 static const uint32_t LIFE_SAFETY_ALARM_VALUES[] = { LIFE_SAFETY_STATE_ALARM };
 static const uint32_t LIFE_SAFETY_FAULT_VALUES[] = { LIFE_SAFETY_STATE_FAULT };
 static const uint32_t LIFE_SAFETY_TIME_DELAY = 0;   // seconds the alarm/fault value must hold
@@ -337,16 +334,20 @@ static const uint8_t NC_PRIORITY_TO_OFFNORMAL = 100;
 static const uint8_t NC_PRIORITY_TO_FAULT = 50;
 static const uint8_t NC_PRIORITY_TO_NORMAL = 200;
 
-// Where Amber's/Azure's alarms are sent. A recipient can be named two ways: by
-// DEVICE instance (the stack resolves the address itself, via its
-// Device-Address-Binding cache and a Who-Is heartbeat) or by ADDRESS. This example
-// seeds the ADDRESS form, defaulting to the LOCAL SUBNET BROADCAST with
-// UNCONFIRMED notifications, so any BACnet client on the subnet sees the alarms
-// without us knowing its address ahead of time. For a single known client, set
-// RECIPIENT_USE_BROADCAST = false and fill in RECIPIENT_IP[].
+// Where Amber's/Azure's alarms are sent: the operator workstation (a B-OWS on a
+// real site; a Python Peer in the Wire Tests). A recipient can be named two ways:
+// by ADDRESS, or by DEVICE instance - and the device form is what a fire panel
+// wants, because the workstation's address can change and its instance does not.
+// The stack resolves the instance to an address itself, from the workstation's
+// I-Am (it sends a Who-Is for it when it has none). The alarms are CONFIRMED, so
+// the stack retries a notification the workstation does not answer (see
+// NUMBER_OF_APDU_RETRIES) and the workstation knows it has missed nothing.
+// 389107 is this example's choice for its Peer (B-LSC's 389007 + 100); on a real
+// site it is the head-end's device instance. A B-LSC is "not required to support
+// modification of its alarm and event reporting by another device" (L.5.2), so
+// this list is configured here, not over the network.
+static const uint32_t RECIPIENT_DEVICE_INSTANCE = 389107;
 static const uint32_t RECIPIENT_PROCESS_IDENTIFIER = 1;
-static const bool RECIPIENT_USE_BROADCAST = true;
-static uint8_t RECIPIENT_IP[4] = { 0, 0, 0, 0 };  // used when not broadcasting
 
 // COV settings (DS-COV-B). Bronze (Analog Input 1) and Amber (Life Safety Point 1)
 // Present_Value are subscribable - see BACnetStack_SetPropertySubscribable in main().
@@ -355,9 +356,11 @@ static const uint32_t COV_MAX_SUPPORTED_LIFETIME_SECONDS = 3600;
 
 // BACnet object type / property identifier / service numbers not already in
 // CASBACnetStackExampleConstants.h (verified against BACnetObjectType.h /
-// BACnetPropertyIdentifier.h / BACnetServicesSupported.h at the pin).
+// BACnetPropertyIdentifier.h / BACnetServicesSupported.h / BACnetReliability.h /
+// BACnetErrorCode.h at the pin).
 static const uint16_t OBJECT_TYPE_LIFE_SAFETY_POINT = 21;  // "Amber"
 static const uint16_t OBJECT_TYPE_LIFE_SAFETY_ZONE = 22;   // "Azure"
+static const uint32_t PROPERTY_IDENTIFIER_NUMBER_OF_APDU_RETRIES = 73;
 static const uint32_t PROPERTY_IDENTIFIER_RELIABILITY = 103;
 static const uint32_t PROPERTY_IDENTIFIER_MODE = 160;
 static const uint32_t PROPERTY_IDENTIFIER_OPERATION_EXPECTED = 161;
@@ -366,13 +369,26 @@ static const uint32_t PROPERTY_IDENTIFIER_TRACKING_VALUE = 164;
 static const uint32_t RELIABILITY_NO_FAULT_DETECTED = 0;
 static const uint32_t SERVICE_SUBSCRIBE_COV = 5;
 static const uint32_t SERVICE_LIFE_SAFETY_OPERATION = 37;
+static const uint32_t ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE = 139;
+static const uint32_t ERROR_CODE_SERVICE_REQUEST_DENIED = 29;
+
+// Number_Of_APDU_Retries (Device property 73): how many times this device sends a
+// confirmed request again when no answer comes back within APDU_Timeout - which is
+// what happens to a ConfirmedEventNotification whose recipient missed it. The stack
+// reads it through GetPropertyUnsignedInteger below; served by nobody it reads 0,
+// which 135-2024 12.11.29 says means "this device does not perform retries". 3 is
+// the clause's suggested default. (APDU_Timeout is left to the stack's default.)
+static const uint32_t NUMBER_OF_APDU_RETRIES = 3;
+
 // BACnetSilencedState (BACnetSilencedState.h): unsilenced(0), audible-silenced(1),
 // visible-silenced(2), all-silenced(3).
-static uint32_t SilencedStateOf(bool audible, bool visual) {
-    return (audible && visual) ? 3 : audible ? 1 : visual ? 2 : 0;
+static uint32_t SilencedStateOf(const LifeSafetyObjectState& state) {
+    return (state.silencedAudible && state.silencedVisual) ? 3 :
+           state.silencedAudible ? 1 : state.silencedVisual ? 2 : 0;
 }
-// BACnetLifeSafetyOperation (BACnetLifeSafetyOperation.h): the values this example
-// handles. none(0) never arrives as a request.
+// BACnetLifeSafetyOperation (BACnetLifeSafetyOperation.h). none(0) never arrives as
+// a request; Operation_Expected uses it for "nothing to do".
+static const uint8_t LIFE_SAFETY_OP_NONE = 0;
 static const uint8_t LIFE_SAFETY_OP_SILENCE = 1;
 static const uint8_t LIFE_SAFETY_OP_SILENCE_AUDIBLE = 2;
 static const uint8_t LIFE_SAFETY_OP_SILENCE_VISUAL = 3;
@@ -382,6 +398,101 @@ static const uint8_t LIFE_SAFETY_OP_RESET_FAULT = 6;
 static const uint8_t LIFE_SAFETY_OP_UNSILENCE = 7;
 static const uint8_t LIFE_SAFETY_OP_UNSILENCE_AUDIBLE = 8;
 static const uint8_t LIFE_SAFETY_OP_UNSILENCE_VISUAL = 9;
+
+// Operation_Expected (cl. 12.15.24, "the next operation expected by this object to
+// handle a specific life safety situation"): while the alarm sounds, SILENCE; once
+// silenced, RESET - which is refused until the smoke has cleared (see
+// LifeSafetyOperation()). Nothing otherwise.
+static uint32_t OperationExpectedOf(const LifeSafetyObjectState& state) {
+    if (state.presentValue != LIFE_SAFETY_STATE_ALARM) {
+        return LIFE_SAFETY_OP_NONE;
+    }
+    return (state.silencedAudible && state.silencedVisual) ? LIFE_SAFETY_OP_RESET : LIFE_SAFETY_OP_SILENCE;
+}
+
+// The life-safety object an (objectType, objectInstance) names, or NULL.
+static LifeSafetyObjectState* GetLifeSafetyObject(uint16_t objectType, uint32_t objectInstance) {
+    if (objectType == OBJECT_TYPE_LIFE_SAFETY_POINT && objectInstance == LIFE_SAFETY_POINT_INSTANCE) {
+        return &g_lifeSafetyPoint;
+    }
+    if (objectType == OBJECT_TYPE_LIFE_SAFETY_ZONE && objectInstance == LIFE_SAFETY_ZONE_INSTANCE) {
+        return &g_lifeSafetyZone;
+    }
+    return NULL;
+}
+
+static const char* LifeSafetyStateName(uint32_t state) {
+    return state == LIFE_SAFETY_STATE_ALARM ? "alarm" : state == LIFE_SAFETY_STATE_FAULT ? "fault" : "quiet";
+}
+
+// Tell the stack Amber's and Azure's Present_Value may have changed: this is what
+// runs the two intrinsic algorithms (and Amber's COV subscriptions).
+static void UpdateLifeSafetyObjects() {
+    BACnetStack_UpdateValue(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_POINT, LIFE_SAFETY_POINT_INSTANCE,
+                            PROPERTY_IDENTIFIER_PRESENT_VALUE);
+    BACnetStack_UpdateValue(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_ZONE, LIFE_SAFETY_ZONE_INSTANCE,
+                            PROPERTY_IDENTIFIER_PRESENT_VALUE);
+}
+
+// One object follows a new detector reading (the rules in LifeSafetyObjectState's
+// comment). Returns true if Present_Value changed.
+static bool FollowReading(LifeSafetyObjectState* state, uint32_t reading) {
+    const uint32_t before = state->presentValue;
+    state->trackingValue = reading;
+    if (reading == LIFE_SAFETY_STATE_ALARM) {
+        if (state->presentValue != LIFE_SAFETY_STATE_ALARM) {
+            state->silencedAudible = false;   // a new alarm sounds again
+            state->silencedVisual = false;
+        }
+        state->presentValue = LIFE_SAFETY_STATE_ALARM;
+    } else if (state->presentValue != LIFE_SAFETY_STATE_ALARM) {
+        state->presentValue = reading;        // fault and quiet are not latched
+    }
+    return state->presentValue != before;
+}
+
+// SIMULATION -> BACnet: the detector's reading reaches Amber and, rolled up, Azure
+// (the zone takes its only member's reading - the roll-up rule is a local matter,
+// cl. 12.16).
+static void ApplyDetectorReading(uint32_t reading) {
+    g_detectorReading = reading;
+    FollowReading(&g_lifeSafetyPoint, reading);
+    FollowReading(&g_lifeSafetyZone, reading);
+    UpdateLifeSafetyObjects();
+    printf("SIMULATION: smoke detector reads %s -> Amber Tracking_Value %s, Present_Value %s\n",
+           reading == LIFE_SAFETY_STATE_ALARM ? "SMOKE" : reading == LIFE_SAFETY_STATE_FAULT ? "FAULT" : "quiet",
+           LifeSafetyStateName(g_lifeSafetyPoint.trackingValue),
+           LifeSafetyStateName(g_lifeSafetyPoint.presentValue));
+}
+
+// The test control channel's commands (see the table at the top of this section).
+static void HandleSimulationCommand(const char* command, char* reply, size_t replyLength) {
+    if (strncmp(command, "detector", 8) != 0) {
+        snprintf(reply, replyLength, "error unknown command");
+        return;
+    }
+    const char* argument = command + 8;
+    while (*argument == ' ') {
+        ++argument;
+    }
+    if (*argument == '\0') {
+        snprintf(reply, replyLength, "detector %s",
+                 g_detectorReading == LIFE_SAFETY_STATE_ALARM ? "smoke" :
+                 g_detectorReading == LIFE_SAFETY_STATE_FAULT ? "fault" : "quiet");
+        return;
+    }
+    if (strcmp(argument, "quiet") == 0) {
+        ApplyDetectorReading(LIFE_SAFETY_STATE_QUIET);
+    } else if (strcmp(argument, "smoke") == 0) {
+        ApplyDetectorReading(LIFE_SAFETY_STATE_ALARM);
+    } else if (strcmp(argument, "fault") == 0) {
+        ApplyDetectorReading(LIFE_SAFETY_STATE_FAULT);
+    } else {
+        snprintf(reply, replyLength, "error unknown detector reading");
+        return;
+    }
+    snprintf(reply, replyLength, "ok");
+}
 
 // A WriteProperty to a commandable Present_Value carries a priority 1..16. When a
 // client omits it, BACnet uses 16 (the lowest priority) - so normalise anything
@@ -557,61 +668,27 @@ bool GetPropertyEnumerated(const uint32_t deviceInstance, const uint16_t objectT
     if (deviceInstance != g_deviceInstance) {
         return false;
     }
-    // Reliability (required) on Amber and Azure: this example's own writable
-    // Present_Value never distinguishes a sensor fault from a real fault
-    // condition, so Reliability itself is always "no-fault-detected" - the
-    // fault ALGORITHM (armed separately) is what drives Event_State to FAULT.
-    if (propertyIdentifier == PROPERTY_IDENTIFIER_RELIABILITY &&
-        ((objectType == OBJECT_TYPE_LIFE_SAFETY_POINT && objectInstance == LIFE_SAFETY_POINT_INSTANCE) ||
-         (objectType == OBJECT_TYPE_LIFE_SAFETY_ZONE && objectInstance == LIFE_SAFETY_ZONE_INSTANCE))) {
-        *value = RELIABILITY_NO_FAULT_DETECTED;
-        return true;
-    }
-    // Life Safety Point 1 (Amber) / Life Safety Zone 1 (Azure): Present_Value,
-    // Tracking_Value (this example latches them together - see the file header),
-    // Mode, Silenced, and Operation_Expected. Operation_Expected reports the
-    // life-safety operation a person is expected to perform right now: `signal`(6)
-    // while latched in alarm, `reset`(4) while latched in fault, `none`(0) at rest
-    // (BACnetLifeSafetyOperation.h enumeration reused for this R-only property per
-    // cl. 12.15.9/12.16.9).
-    if (objectType == OBJECT_TYPE_LIFE_SAFETY_POINT && objectInstance == LIFE_SAFETY_POINT_INSTANCE) {
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_PRESENT_VALUE ||
-            propertyIdentifier == PROPERTY_IDENTIFIER_TRACKING_VALUE) {
-            *value = g_lifeSafetyPointValue;
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_MODE) {
-            *value = g_lifeSafetyPointMode;
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_SILENCED) {
-            *value = SilencedStateOf(g_lifeSafetyPointSilencedAudible, g_lifeSafetyPointSilencedVisual);
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_OPERATION_EXPECTED) {
-            *value = (g_lifeSafetyPointValue == LIFE_SAFETY_STATE_ALARM) ? 6u /*signal*/ :
-                     (g_lifeSafetyPointValue == LIFE_SAFETY_STATE_FAULT) ? 4u /*reset*/ : 0u /*none*/;
-            return true;
-        }
-    }
-    if (objectType == OBJECT_TYPE_LIFE_SAFETY_ZONE && objectInstance == LIFE_SAFETY_ZONE_INSTANCE) {
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_PRESENT_VALUE ||
-            propertyIdentifier == PROPERTY_IDENTIFIER_TRACKING_VALUE) {
-            *value = g_lifeSafetyZoneValue;
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_MODE) {
-            *value = g_lifeSafetyZoneMode;
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_SILENCED) {
-            *value = SilencedStateOf(g_lifeSafetyZoneSilencedAudible, g_lifeSafetyZoneSilencedVisual);
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_OPERATION_EXPECTED) {
-            *value = (g_lifeSafetyZoneValue == LIFE_SAFETY_STATE_ALARM) ? 6u /*signal*/ :
-                     (g_lifeSafetyZoneValue == LIFE_SAFETY_STATE_FAULT) ? 4u /*reset*/ : 0u /*none*/;
-            return true;
+    // Life Safety Point 1 (Amber) / Life Safety Zone 1 (Azure): Present_Value (the
+    // latched state), Tracking_Value (the detector's live reading), Reliability,
+    // Mode, Silenced and Operation_Expected - all from this example's own state,
+    // moved by the detector (section 1b) and LifeSafetyOperation(). See
+    // LifeSafetyObjectState for the rules.
+    const LifeSafetyObjectState* lifeSafetyObject = GetLifeSafetyObject(objectType, objectInstance);
+    if (lifeSafetyObject != NULL) {
+        switch (propertyIdentifier) {
+            case PROPERTY_IDENTIFIER_PRESENT_VALUE:   *value = lifeSafetyObject->presentValue; return true;
+            case PROPERTY_IDENTIFIER_TRACKING_VALUE:  *value = lifeSafetyObject->trackingValue; return true;
+            // Reliability: what this callback serves is cl. 13.2.2.2's FIRST stage - the
+            // hardware's own health (a broken loop card, say), which takes precedence.
+            // This example's detector hardware never fails that way, so: no fault. The
+            // SECOND stage is the stack's: its FAULT_LIFE_SAFETY algorithm (armed in
+            // main()) reports MULTI_STATE_FAULT while Present_Value is fault, and the
+            // stack serves that on a read (stack #2359). Do not compute it here.
+            case PROPERTY_IDENTIFIER_RELIABILITY:     *value = RELIABILITY_NO_FAULT_DETECTED; return true;
+            case PROPERTY_IDENTIFIER_MODE:            *value = lifeSafetyObject->mode; return true;
+            case PROPERTY_IDENTIFIER_SILENCED:        *value = SilencedStateOf(*lifeSafetyObject); return true;
+            case PROPERTY_IDENTIFIER_OPERATION_EXPECTED: *value = OperationExpectedOf(*lifeSafetyObject); return true;
+            default: break;
         }
     }
     if (objectType == OBJECT_TYPE_BINARY_INPUT &&
@@ -702,6 +779,11 @@ bool GetPropertyUnsignedInteger(const uint32_t deviceInstance, const uint16_t ob
     if (objectType == OBJECT_TYPE_DEVICE && objectInstance == g_deviceInstance &&
         propertyIdentifier == PROPERTY_IDENTIFIER_VENDOR_IDENTIFIER) {
         *value = VENDOR_IDENTIFIER;
+        return true;
+    }
+    if (objectType == OBJECT_TYPE_DEVICE && objectInstance == g_deviceInstance &&
+        propertyIdentifier == PROPERTY_IDENTIFIER_NUMBER_OF_APDU_RETRIES) {
+        *value = NUMBER_OF_APDU_RETRIES; // the stack retries confirmed requests (alarms) this many times
         return true;
     }
     if (objectType == OBJECT_TYPE_NETWORK_PORT && objectInstance == NETWORK_PORT_INSTANCE) {
@@ -983,52 +1065,18 @@ bool SetPropertyEnumerated(const uint32_t deviceInstance, const uint16_t objectT
     if (deviceInstance != g_deviceInstance) {
         return false;
     }
-    // Life Safety Point 1 (Amber) / Life Safety Zone 1 (Azure): Present_Value
-    // (the demo alarm/fault trigger - see the file header) and Mode (required
-    // writable by the profile, cl. 12.15.12/12.16.12). Present_Value accepts
-    // only the three states this example's algorithms know about; anything else
-    // is value-out-of-range. Mode is accepted unconditionally - see the file
-    // header's note on why this example does not gate it against Accepted_Modes.
-    if ((objectType == OBJECT_TYPE_LIFE_SAFETY_POINT && objectInstance == LIFE_SAFETY_POINT_INSTANCE) ||
-        (objectType == OBJECT_TYPE_LIFE_SAFETY_ZONE && objectInstance == LIFE_SAFETY_ZONE_INSTANCE)) {
-        const bool isPoint = (objectType == OBJECT_TYPE_LIFE_SAFETY_POINT);
-        const char* name = isPoint ? "Amber" : "Azure";
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_PRESENT_VALUE) {
-            if (value != LIFE_SAFETY_STATE_QUIET && value != LIFE_SAFETY_STATE_ALARM &&
-                value != LIFE_SAFETY_STATE_FAULT) {
-                *errorCode = ERROR_CODE_VALUE_OUT_OF_RANGE;
-                return false;
-            }
-            if (isPoint) {
-                g_lifeSafetyPointValue = value;
-            } else {
-                g_lifeSafetyZoneValue = value;
-            }
-            // Wake the intrinsic algorithms - see BACnetStack_UpdateValue's doc
-            // comment: "a host that never calls it will never generate an event
-            // notification."
-            // One UpdateValue call re-evaluates BOTH the intrinsic algorithm(s)
-            // and any COV subscription on this property (Amber's Present_Value
-            // is COV-subscribable - see BACnetStack_SetPropertySubscribable in
-            // main()); there is no separate "notify COV" export.
-            BACnetStack_UpdateValue(g_deviceInstance, objectType, objectInstance,
-                                    PROPERTY_IDENTIFIER_PRESENT_VALUE);
-            printf("WriteProperty: Life Safety %s %u (%s) Present_Value <- %s\n",
-                   isPoint ? "Point" : "Zone", objectInstance, name,
-                   value == LIFE_SAFETY_STATE_ALARM ? "alarm(2)" :
-                   value == LIFE_SAFETY_STATE_FAULT ? "fault(3)" : "quiet(0)");
-            return true;
-        }
-        if (propertyIdentifier == PROPERTY_IDENTIFIER_MODE) {
-            if (isPoint) {
-                g_lifeSafetyPointMode = value;
-            } else {
-                g_lifeSafetyZoneMode = value;
-            }
-            printf("WriteProperty: Life Safety %s %u (%s) Mode <- %u\n",
-                   isPoint ? "Point" : "Zone", objectInstance, name, value);
-            return true;
-        }
+    // Life Safety Point 1 (Amber) / Life Safety Zone 1 (Azure): Mode is the one
+    // writable property (Table 12-18 / 12-19 "W"). It is accepted unconditionally -
+    // see the file header's note on Accepted_Modes. Present_Value and
+    // Tracking_Value are NOT writable: only the detector (section 1b) and a
+    // LifeSafetyOperation move them, so no client can fake or clear an alarm.
+    LifeSafetyObjectState* lifeSafetyObject = GetLifeSafetyObject(objectType, objectInstance);
+    if (lifeSafetyObject != NULL && propertyIdentifier == PROPERTY_IDENTIFIER_MODE) {
+        lifeSafetyObject->mode = value;
+        printf("WriteProperty: Life Safety %s %u (%s) Mode <- %u\n",
+               lifeSafetyObject == &g_lifeSafetyPoint ? "Point" : "Zone", objectInstance,
+               lifeSafetyObject == &g_lifeSafetyPoint ? "Amber" : "Azure", value);
+        return true;
     }
     Commandable* c = GetCommandable(objectType, objectInstance);
     if (c != NULL && objectType == OBJECT_TYPE_BINARY_OUTPUT &&
@@ -1379,21 +1427,31 @@ bool GetPropertyTime(const uint32_t deviceInstance, const uint16_t objectType,
     return true;
 }
 
-// AcknowledgeAlarm (AE-ACK-B). An operator acknowledges an alarm the device
-// reported. The stack tracks the acknowledged state; this callback lets the
-// application react (and accept or reject). The callback carries a long argument
-// list (the acknowledged event, its time stamp, the ack source, and the time of
-// acknowledgement); this example only needs the object that was acked, so the
-// other parameters are left UNNAMED - C++ lets you omit the name of a parameter
-// you do not use, which is cleaner than a wall of (void) casts.
-bool AcknowledgeAlarm(const uint32_t deviceInstance, const uint32_t /*acknowledgingProcessIdentifier*/,
+/// AcknowledgeAlarm (AE-ACK-B) - "Maintain a list of unacknowledged alarms / events"
+// and "Notifying other recipients that the acknowledgment has been received"
+// (135-2024 L.5.2). The STACK runs the 13.5.2 service procedure: it finds the object
+// (UNKNOWN_OBJECT if there is none, NO_ALARM_CONFIGURED if it has no event
+// reporting), then calls this callback, then checks that the acknowledged 'Time
+// Stamp' is the latest one for that transition (else SERVICES / INVALID_TIMESTAMP)
+// and that 'Event State Acknowledged' matches it. Only then does it set the
+// Acked_Transitions bit, answer SimpleACK and send the ACK_NOTIFICATION to the same
+// recipients the alarm went to. So this callback runs BEFORE that check - it is told
+// about an attempt, not a success. (Same finding as B-AAC-CPP 1.4.0.)
+//
+// What the callback is for: the application's own say. Return false with *errorCode
+// set (the stack pairs it with Error Class SERVICES) to refuse - SERVICE_REQUEST_DENIED
+// for an operator who may not acknowledge this alarm, say. This example accepts every
+// operator and logs who it was. Parameters it does not use are left UNNAMED (C++ lets
+// you omit the name of a parameter you do not use, which is cleaner than a wall of
+// (void) casts).
+bool AcknowledgeAlarm(const uint32_t deviceInstance, const uint32_t acknowledgingProcessIdentifier,
                       const uint16_t eventObjectType, const uint32_t eventObjectInstance,
-                      const uint16_t /*eventStateAcknowledged*/, const uint8_t /*eventTimeStampYear*/,
+                      const uint16_t eventStateAcknowledged, const uint8_t /*eventTimeStampYear*/,
                       const uint8_t /*eventTimeStampMonth*/, const uint8_t /*eventTimeStampDay*/,
                       const uint8_t /*eventTimeStampWeekday*/, const uint8_t /*eventTimeStampHour*/,
                       const uint8_t /*eventTimeStampMinute*/, const uint8_t /*eventTimeStampSecond*/,
-                      const uint8_t /*eventTimeStampHundrethSecond*/, const char* /*acknowledgementSource*/,
-                      const uint32_t /*acknowledgementSourceLength*/, const uint8_t /*acknowledgementSourceEncoding*/,
+                      const uint8_t /*eventTimeStampHundrethSecond*/, const char* acknowledgementSource,
+                      const uint32_t acknowledgementSourceLength, const uint8_t /*acknowledgementSourceEncoding*/,
                       const bool /*timeOfAcknowledgementIsTime*/, const bool /*timeOfAcknowledgementIsSequenceNumber*/,
                       const bool /*timeOfAcknowledgementIsDateTime*/, const uint8_t /*timeOfAcknowledgementYear*/,
                       const uint8_t /*timeOfAcknowledgementMonth*/, const uint8_t /*timeOfAcknowledgementDay*/,
@@ -1402,78 +1460,89 @@ bool AcknowledgeAlarm(const uint32_t deviceInstance, const uint32_t /*acknowledg
                       const uint8_t /*timeOfAcknowledgementHundrethSecond*/,
                       const uint16_t /*timeOfAcknowledgementSequenceNumber*/, uint32_t* errorCode) {
     if (deviceInstance != g_deviceInstance) {
+        *errorCode = ERROR_CODE_SERVICE_REQUEST_DENIED;
         return false;
     }
-    // Only Amber and Azure have alarms in this example. Reject an ack for anything
-    // else (a real device would also confirm the object is actually in the
-    // acknowledged state). The stack pairs this code with the right error class.
-    const bool isAmber = (eventObjectType == OBJECT_TYPE_LIFE_SAFETY_POINT &&
-                          eventObjectInstance == LIFE_SAFETY_POINT_INSTANCE);
-    const bool isAzure = (eventObjectType == OBJECT_TYPE_LIFE_SAFETY_ZONE &&
-                          eventObjectInstance == LIFE_SAFETY_ZONE_INSTANCE);
-    if (!isAmber && !isAzure) {
-        printf("AcknowledgeAlarm: rejected for object (type %u, instance %u) - no such alarm\n",
-               eventObjectType, eventObjectInstance);
-        *errorCode = ERROR_CODE_VALUE_OUT_OF_RANGE;
-        return false;
-    }
-    printf("AcknowledgeAlarm: Life Safety %s 1 (%s) alarm acknowledged\n",
-           isAmber ? "Point" : "Zone", isAmber ? "Amber" : "Azure");
-    return true; // accept the acknowledgement
+    // The source is a wire string: not null-terminated, and possibly longer than we
+    // want to print. Print at most 64 characters of it, by length.
+    const int sourceLength = (int)(acknowledgementSourceLength < 64 ? acknowledgementSourceLength : 64);
+    printf("AcknowledgeAlarm: \"%.*s\" (process %u) acknowledges object (type %u, instance %u) "
+           "event state %u - the stack now checks its time stamp\n",
+           sourceLength, acknowledgementSource != NULL ? acknowledgementSource : "",
+           acknowledgingProcessIdentifier, eventObjectType, eventObjectInstance, eventStateAcknowledged);
+    return true; // accept; the stack decides whether the acknowledgement matches the alarm
 }
 
-// LifeSafetyOperation (AE-LS-B). A client (or a local silence switch on a real
-// panel) commands a life-safety operation on Amber, Azure, or - when
-// useObjectIdentifier is false - every life-safety object in this device
-// (cl. 13.8.1.4's "no object identifier means all applicable objects" reading,
-// same convention this series' B-LSC canonical copy source documents for later
-// repos). requestOperation is a BACnetLifeSafetyOperation (see the LIFE_SAFETY_OP_*
-// constants above). SILENCE/UNSILENCE touch both the audible and visual channel;
-// the _AUDIBLE/_VISUAL variants touch only their own channel. RESET unlatches
-// unconditionally; RESET_ALARM only when the object is currently latched in
-// alarm(2); RESET_FAULT only when it is currently latched in fault(3) - mirroring
-// the stack's own (internal, not customer-exported) BACnetStackLifeSafetyObject
-// semantics documented in BACnetStackLifeSafetyObject.h at the pin.
-static void ApplyLifeSafetyOperationToOne(const uint8_t operation, const char* name,
-                                          uint32_t* presentValue, bool* silencedAudible,
-                                          bool* silencedVisual, const uint16_t objectType,
-                                          const uint32_t objectInstance) {
-    switch (operation) {
-        case LIFE_SAFETY_OP_SILENCE:
-            *silencedAudible = true; *silencedVisual = true; break;
-        case LIFE_SAFETY_OP_SILENCE_AUDIBLE:
-            *silencedAudible = true; break;
-        case LIFE_SAFETY_OP_SILENCE_VISUAL:
-            *silencedVisual = true; break;
-        case LIFE_SAFETY_OP_UNSILENCE:
-            *silencedAudible = false; *silencedVisual = false; break;
-        case LIFE_SAFETY_OP_UNSILENCE_AUDIBLE:
-            *silencedAudible = false; break;
-        case LIFE_SAFETY_OP_UNSILENCE_VISUAL:
-            *silencedVisual = false; break;
-        case LIFE_SAFETY_OP_RESET:
-            *presentValue = LIFE_SAFETY_STATE_QUIET;
-            break;
-        case LIFE_SAFETY_OP_RESET_ALARM:
-            if (*presentValue == LIFE_SAFETY_STATE_ALARM) {
-                *presentValue = LIFE_SAFETY_STATE_QUIET;
-            }
-            break;
-        case LIFE_SAFETY_OP_RESET_FAULT:
-            if (*presentValue == LIFE_SAFETY_STATE_FAULT) {
-                *presentValue = LIFE_SAFETY_STATE_QUIET;
-            }
-            break;
-        default:
-            return; // unrecognised operation - leave state untouched
+// LifeSafetyOperation (AE-LS-B, cl. 13.13) - "Execution of all forms of life safety
+// operations" (L.5.2). An operator silences the sounders and strobes, unsilences them,
+// or resets a latched alarm. The STACK checks that a named object exists
+// (UNKNOWN_OBJECT) and that the 'Request' is a standard operation; whether the
+// operation fits the object's CURRENT STATE is this callback's decision (the stack's
+// own comment on the processor: "that check is ENTIRELY delegated to
+// CallbackLifeSafetyOperation"). A false return with *errorCode set is sent as Error
+// Class OBJECT with that code (SERVICES for SERVICE_REQUEST_DENIED).
+//
+// What each request does here:
+//   SILENCE / _AUDIBLE / _VISUAL, UNSILENCE / _AUDIBLE / _VISUAL - set or clear the
+//      object's audible and/or visual silenced flags (Silenced, cl. 12.15.23).
+//   RESET, RESET_ALARM - unlatch an alarm: Present_Value returns to the detector's
+//      reading (quiet). Refused with INVALID_OPERATION_IN_THIS_STATE (cl. 13.13.1.3.1,
+//      "The operation specified in the 'Request' parameter is invalid in the current
+//      state of the selected object") when the object is not latched in alarm - "a
+//      RESET operation is requested but the object is not ready to be reset or is
+//      already reset" (cl. 13.13.2) - and when the detector STILL sees smoke: a panel
+//      does not let an operator clear an alarm whose cause is still there.
+//   RESET_FAULT - a fault is not latched here (it clears when the detector is
+//      repaired), so there is never a fault latch to reset: refused the same way.
+//
+// A zone is reset or silenced together with its member: an operation addressed to
+// Azure also applies to Amber. With no 'Object Identifier' the operation goes to
+// "all applicable objects" (cl. 13.13.1.1.4): each object it fits is operated, the
+// rest are left alone, and the answer is Result(+) (cl. 13.13.2).
+static bool IsResetOperation(uint8_t operation) {
+    return operation == LIFE_SAFETY_OP_RESET || operation == LIFE_SAFETY_OP_RESET_ALARM ||
+           operation == LIFE_SAFETY_OP_RESET_FAULT;
+}
+
+static bool IsSilenceOperation(uint8_t operation) {
+    return operation >= LIFE_SAFETY_OP_SILENCE && operation <= LIFE_SAFETY_OP_SILENCE_VISUAL;
+}
+
+static bool IsUnsilenceOperation(uint8_t operation) {
+    return operation >= LIFE_SAFETY_OP_UNSILENCE && operation <= LIFE_SAFETY_OP_UNSILENCE_VISUAL;
+}
+
+// Can `operation` be carried out on this object in its current state?
+static bool OperationFits(const LifeSafetyObjectState& state, uint8_t operation) {
+    if (IsSilenceOperation(operation) || IsUnsilenceOperation(operation)) {
+        return true;
     }
-    printf("LifeSafetyOperation: %s <- operation %u (Silenced/Present_Value updated)\n",
-           name, operation);
-    // A RESET-family operation may have changed Present_Value; re-evaluate the
-    // intrinsic algorithm and any COV subscription exactly like a WriteProperty
-    // would (see SetPropertyEnumerated above).
-    BACnetStack_UpdateValue(g_deviceInstance, objectType, objectInstance,
-                            PROPERTY_IDENTIFIER_PRESENT_VALUE);
+    if (operation == LIFE_SAFETY_OP_RESET || operation == LIFE_SAFETY_OP_RESET_ALARM) {
+        return state.presentValue == LIFE_SAFETY_STATE_ALARM &&
+               state.trackingValue != LIFE_SAFETY_STATE_ALARM;
+    }
+    return false; // RESET_FAULT (no fault latch) and anything non-standard
+}
+
+static void ApplyOperation(LifeSafetyObjectState* state, uint8_t operation) {
+    const bool audible = operation == LIFE_SAFETY_OP_SILENCE || operation == LIFE_SAFETY_OP_SILENCE_AUDIBLE ||
+                         operation == LIFE_SAFETY_OP_UNSILENCE || operation == LIFE_SAFETY_OP_UNSILENCE_AUDIBLE;
+    const bool visual = operation == LIFE_SAFETY_OP_SILENCE || operation == LIFE_SAFETY_OP_SILENCE_VISUAL ||
+                        operation == LIFE_SAFETY_OP_UNSILENCE || operation == LIFE_SAFETY_OP_UNSILENCE_VISUAL;
+    if (IsSilenceOperation(operation) || IsUnsilenceOperation(operation)) {
+        if (audible) {
+            state->silencedAudible = IsSilenceOperation(operation);
+        }
+        if (visual) {
+            state->silencedVisual = IsSilenceOperation(operation);
+        }
+        return;
+    }
+    if (IsResetOperation(operation)) {
+        state->presentValue = state->trackingValue;   // unlatch: back to what the detector reads
+        state->silencedAudible = false;
+        state->silencedVisual = false;
+    }
 }
 
 bool LifeSafetyOperation(const uint32_t deviceInstance, const uint32_t requestingProcessIdentifier,
@@ -1481,31 +1550,58 @@ bool LifeSafetyOperation(const uint32_t deviceInstance, const uint32_t requestin
                          const uint8_t requestOperation, const bool useObjectIdentifier,
                          const uint16_t objectType, const uint32_t objectInstance,
                          uint32_t* errorCode) {
-    (void)requestingProcessIdentifier;
-    (void)requestingSource;
-    (void)requestingSourceLength;
     if (deviceInstance != g_deviceInstance) {
         *errorCode = ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED;
         return false;
     }
-    const bool applyToPoint = !useObjectIdentifier ||
-        (objectType == OBJECT_TYPE_LIFE_SAFETY_POINT && objectInstance == LIFE_SAFETY_POINT_INSTANCE);
-    const bool applyToZone = !useObjectIdentifier ||
-        (objectType == OBJECT_TYPE_LIFE_SAFETY_ZONE && objectInstance == LIFE_SAFETY_ZONE_INSTANCE);
-    if (!applyToPoint && !applyToZone) {
-        *errorCode = ERROR_CODE_VALUE_OUT_OF_RANGE; // no such life-safety object
+    if (requestOperation < LIFE_SAFETY_OP_SILENCE || requestOperation > LIFE_SAFETY_OP_UNSILENCE_VISUAL) {
+        *errorCode = ERROR_CODE_VALUE_OUT_OF_RANGE; // "does not support the operation" (cl. 13.13.1.3.1)
         return false;
     }
-    if (applyToPoint) {
-        ApplyLifeSafetyOperationToOne(requestOperation, "Amber", &g_lifeSafetyPointValue,
-                                      &g_lifeSafetyPointSilencedAudible, &g_lifeSafetyPointSilencedVisual,
-                                      OBJECT_TYPE_LIFE_SAFETY_POINT, LIFE_SAFETY_POINT_INSTANCE);
+    const int sourceLength = (int)(requestingSourceLength < 64 ? requestingSourceLength : 64);
+    const char* sourceText = requestingSource != NULL ? requestingSource : "";
+
+    // The objects this request operates: the named one (a zone with its member), or
+    // every life-safety object when none is named.
+    LifeSafetyObjectState* targets[2] = { NULL, NULL };
+    if (!useObjectIdentifier) {
+        targets[0] = &g_lifeSafetyPoint;
+        targets[1] = &g_lifeSafetyZone;
+    } else {
+        LifeSafetyObjectState* named = GetLifeSafetyObject(objectType, objectInstance);
+        if (named == NULL) {
+            // An object that exists but is not a life-safety object (the stack has
+            // already answered UNKNOWN_OBJECT for one that does not exist).
+            *errorCode = ERROR_CODE_OPTIONAL_FUNCTIONALITY_NOT_SUPPORTED;
+            return false;
+        }
+        targets[0] = named;
+        if (named == &g_lifeSafetyZone) {
+            targets[1] = &g_lifeSafetyPoint;   // Azure's member
+        }
+        if (!OperationFits(*named, requestOperation)) {
+            printf("LifeSafetyOperation: \"%.*s\" (process %u) operation %u on %s REFUSED - "
+                   "invalid in its current state (Present_Value %s, detector %s)\n",
+                   sourceLength, sourceText, requestingProcessIdentifier, requestOperation,
+                   named == &g_lifeSafetyPoint ? "Amber" : "Azure",
+                   LifeSafetyStateName(named->presentValue), LifeSafetyStateName(named->trackingValue));
+            *errorCode = ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE;
+            return false;
+        }
     }
-    if (applyToZone) {
-        ApplyLifeSafetyOperationToOne(requestOperation, "Azure", &g_lifeSafetyZoneValue,
-                                      &g_lifeSafetyZoneSilencedAudible, &g_lifeSafetyZoneSilencedVisual,
-                                      OBJECT_TYPE_LIFE_SAFETY_ZONE, LIFE_SAFETY_ZONE_INSTANCE);
+    for (size_t targetIndex = 0; targetIndex < 2; ++targetIndex) {
+        LifeSafetyObjectState* target = targets[targetIndex];
+        if (target != NULL && OperationFits(*target, requestOperation)) {
+            ApplyOperation(target, requestOperation);
+            printf("LifeSafetyOperation: \"%.*s\" (process %u) operation %u on %s -> Present_Value %s, "
+                   "Silenced %u\n", sourceLength, sourceText, requestingProcessIdentifier, requestOperation,
+                   target == &g_lifeSafetyPoint ? "Amber" : "Azure", LifeSafetyStateName(target->presentValue),
+                   SilencedStateOf(*target));
+        }
     }
+    // A reset may have changed Present_Value: run the algorithms (the return to
+    // normal is notified from here) and Amber's COV subscriptions.
+    UpdateLifeSafetyObjects();
     return true;
 }
 
@@ -1607,10 +1703,11 @@ int main(int argc, char** argv) {
     BACnetStack_RegisterCallbackReinitializeDevice(ReinitializeDevice);                 // DM-RD-B
     BACnetStack_RegisterCallbackSetSystemTime(SetSystemTime);              // DM-TS-B / DM-UTC-B
     BACnetStack_RegisterCallbackAcknowledgeAlarm(AcknowledgeAlarm);                     // AE-ACK-B
-    // AE-LS-B: registered for forward-compatibility (see the "not yet enabled"
-    // note where SERVICE_LIFE_SAFETY_OPERATION would otherwise be turned on,
-    // below) - harmless to register even while the underlying service is
-    // compiled out of the linked static library.
+    // AE-LS-B: executing LifeSafetyOperation (silence / unsilence / reset). The
+    // service is compiled in by CMakeLists.txt (STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION);
+    // a stack built without it logs "This feature was not compiled" here, and
+    // enabling the service below then fails, so the example stops at start-up
+    // rather than advertise a service it cannot execute.
     BACnetStack_RegisterCallbackLifeSafetyOperation(LifeSafetyOperation);
 
     // --- Create the device --------------------------------------------------
@@ -1636,19 +1733,11 @@ int main(int argc, char** argv) {
         { SERVICE_GET_EVENT_INFORMATION,         "GetEventInformation (AE-INFO-B)" },
         { SERVICE_CONFIRMED_EVENT_NOTIFICATION,  "ConfirmedEventNotification (AE-LS-B)" },
         { SERVICE_UNCONFIRMED_EVENT_NOTIFICATION,"UnconfirmedEventNotification (AE-LS-B)" },
-        // LifeSafetyOperation (service 37) is deliberately NOT in this list - see
-        // TODO.md #2. Confirmed by running the built binary: registering the
-        // callback (above) logs "This feature was not compiled. To enable,
-        // re-compile the CAS BACnet Stack with this defined:
-        // STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION" - that compile option is
-        // NOT part of the STACK_OPTION_TARGET_FULL preset every example in this
-        // series is built with (unlike the Life Safety Point/Zone OBJECT TYPES,
-        // which are). Advertising the service bit in Protocol_Services_Supported
-        // while the processor cannot execute it would be a conformance defect
-        // worse than simply not claiming it, so this example leaves the bit off.
-        // That leaves AE-LS-B, which this profile requires, only partly met:
-        // K.2.13 lists LifeSafetyOperation under Execute for AE-LS-B. Alarm
-        // GENERATION (the ChangeOfLifeSafety/fault algorithms) is unaffected.
+        // LifeSafetyOperation: AE-LS-B lists it under Execute (135-2024 K.2.13,
+        // "able to process silence and reset operations on its life safety
+        // objects"). Needs STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION - see
+        // CMakeLists.txt; since stack #3031 enabling a compiled-out service fails.
+        { SERVICE_LIFE_SAFETY_OPERATION,         "LifeSafetyOperation (AE-LS-B) - build the stack with STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION" },
     };
     for (size_t i = 0; i < sizeof(services) / sizeof(services[0]); ++i) {
         if (!BACnetStack_SetServiceEnabled(g_deviceInstance, services[i].service, true)) {
@@ -1813,18 +1902,13 @@ int main(int argc, char** argv) {
     }
 
     // --- Configure intrinsic life-safety ALARMING (AE-LS-B / AE-ACK-B / AE-INFO-B)
-    // 1) Make Amber's and Azure's Present_Value writable so a client can drive
-    //    them to alarm(2)/fault(3) - see the file header for why. Mode is also
-    //    required-writable by the profile (cl. 12.15.12/12.16.12).
+    // 1) Mode is required-writable (Table 12-18 / 12-19 "W"). Present_Value stays
+    //    read-only: the detector moves it, not a client.
     if (!BACnetStack_SetPropertyWritable(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_POINT,
-                                         LIFE_SAFETY_POINT_INSTANCE, PROPERTY_IDENTIFIER_PRESENT_VALUE, true) ||
-        !BACnetStack_SetPropertyWritable(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_ZONE,
-                                         LIFE_SAFETY_ZONE_INSTANCE, PROPERTY_IDENTIFIER_PRESENT_VALUE, true) ||
-        !BACnetStack_SetPropertyWritable(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_POINT,
                                          LIFE_SAFETY_POINT_INSTANCE, PROPERTY_IDENTIFIER_MODE, true) ||
         !BACnetStack_SetPropertyWritable(g_deviceInstance, OBJECT_TYPE_LIFE_SAFETY_ZONE,
                                          LIFE_SAFETY_ZONE_INSTANCE, PROPERTY_IDENTIFIER_MODE, true)) {
-        printf("Error: Failed to make Amber/Azure Present_Value/Mode writable.\n");
+        printf("Error: Failed to make Amber/Azure Mode writable.\n");
         return 1;
     }
 
@@ -1839,18 +1923,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 3) Add a recipient to Crimson - WHERE the alarm notifications go. We address
-    //    it by ADDRESS (the form the stack can actually send to). The MAC is the
-    //    BACnet/IP recipient: four IP octets followed by the two-octet UDP port.
+    // 3) Add a recipient to Crimson - WHERE the alarm notifications go: the operator
+    //    workstation, by DEVICE instance (see RECIPIENT_DEVICE_INSTANCE), CONFIRMED.
     //    validDays 0x7F = every day; the time window 00:00:00 - 23:59:59 = always.
-    uint8_t recipientMac[6];
-    if (RECIPIENT_USE_BROADCAST) {
-        LocalBroadcastConnString(recipientMac);
-    } else {
-        memcpy(recipientMac, RECIPIENT_IP, 4);
-        recipientMac[4] = (uint8_t)(g_bacnetIpUdpPort >> 8);
-        recipientMac[5] = (uint8_t)(g_bacnetIpUdpPort & 0xFF);
-    }
     const uint8_t validDaysAll = 0x7F;
     if (!BACnetStack_AddRecipientToNotificationClass(
             g_deviceInstance, NOTIFICATION_CLASS_INSTANCE,
@@ -1858,12 +1933,11 @@ int main(int argc, char** argv) {
             0, 0, 0, 0,         // from 00:00:00.00
             23, 59, 59, 99,     // to   23:59:59.99
             RECIPIENT_PROCESS_IDENTIFIER,
-            false,              // issue UNCONFIRMED notifications (works to a broadcast)
+            true,               // issue CONFIRMED notifications (retried if unanswered)
             true, true, true,   // notify on to-offnormal, to-fault, to-normal
-            false, 0,           // NOT using the device choice
-            true,               // use the ADDRESS choice
-            0,                  // network number 0 = this local network
-            recipientMac, sizeof(recipientMac))) {
+            true, RECIPIENT_DEVICE_INSTANCE, // the DEVICE choice: the stack finds the address
+            false,              // NOT the address choice
+            0, NULL, 0)) {
         printf("Error: could not seed the Notification Class recipient (Crimson).\n");
         return 1;
     }
@@ -1945,6 +2019,12 @@ int main(int argc, char** argv) {
     BACnetStack_SendWhoIs(broadcastConn, sizeof(broadcastConn), NETWORK_PORT_INSTANCE,
                           true /*broadcast*/, 0, NULL, 0);
 
+    // SIMULATION only: the Wire Tests' detector back door (off unless
+    // BLSC_SIMULATION_CONTROL_PORT is set - see simulation/SimulationControl.h).
+    if (!SimulationControl::Start("BLSC_SIMULATION_CONTROL_PORT", HandleSimulationCommand)) {
+        return 1;
+    }
+
     printf("FYI: Device %u (\"%s\") ready. Vendor ID %u. Press 'h' for help.\n",
            g_deviceInstance, DEVICE_NAME, VENDOR_IDENTIFIER);
 
@@ -1954,6 +2034,7 @@ int main(int argc, char** argv) {
     bool running = true;
     while (running) {
         BACnetStack_Tick();
+        SimulationControl::Service();   // SIMULATION: the detector's test control channel
 
         // --- Deferred restart (DM-RD-B) -------------------------------------
         // ReinitializeDevice only ARMED the restart; the SimpleACK has now had a
@@ -1987,14 +2068,11 @@ int main(int argc, char** argv) {
                 g_multiStateOutput = multiStateOutputAtPowerOn;
                 // Amber and Azure return to quiet, unsilenced, and Mode "on" -
                 // the same power-on-state convention as the outputs above.
-                g_lifeSafetyPointValue = LIFE_SAFETY_STATE_QUIET;
-                g_lifeSafetyPointMode = LIFE_SAFETY_MODE_ON;
-                g_lifeSafetyPointSilencedAudible = false;
-                g_lifeSafetyPointSilencedVisual = false;
-                g_lifeSafetyZoneValue = LIFE_SAFETY_STATE_QUIET;
-                g_lifeSafetyZoneMode = LIFE_SAFETY_MODE_ON;
-                g_lifeSafetyZoneSilencedAudible = false;
-                g_lifeSafetyZoneSilencedVisual = false;
+                // A cold start clears every latch; the detector itself still
+                // reads whatever it reads, so the objects take that reading again.
+                g_lifeSafetyPoint = LIFE_SAFETY_POWER_ON_STATE;
+                g_lifeSafetyZone = LIFE_SAFETY_POWER_ON_STATE;
+                ApplyDetectorReading(g_detectorReading);
             } else {
                 printf("Restart: WARMSTART - re-initializing, keeping commanded values.\n");
             }
@@ -2041,6 +2119,7 @@ int main(int argc, char** argv) {
 #endif
     }
 
+    SimulationControl::Stop();
     CASExampleHelper::RestoreInput();
     CASExampleHelper::ShutdownUDP();
     return 0;

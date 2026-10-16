@@ -18,7 +18,7 @@ sys.path.insert(0, str(REPOSITORY))
 
 import wiretest  # noqa: E402  (the vendored harness at the repository root)
 
-SCRIPTS = ["discovery_test.py"]
+SCRIPTS = ["discovery_test.py", "life_safety_test.py", "fault_test.py"]
 
 
 def main():

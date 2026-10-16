@@ -10,12 +10,11 @@ see [README.md](../README.md).
 > `CHANGE ALL OF THIS BEFORE YOU SHIP` block at the top of `main.cpp`. The
 > example has **not** been submitted for BTL certification.
 
-> **Status at stack `6.x` @ `64b2cfac5`.** Life Safety Point 1 ("Amber") and
-> Life Safety Zone 1 ("Azure") serve every property they list, and a
-> WriteProperty of `Present_Value` drives their intrinsic ChangeOfLifeSafety
-> and fault algorithms (checked over the wire). Up to stack `abd4cee1` both
-> answered `unknown-object` for almost every property (fixed by stack #2187).
-> Still missing: LifeSafetyOperation is not executed (section 3), and Zone 1's
+> **Status at stack `6.x` @ `64b2cfac5`.** The example is Profile-functional:
+> a simulated smoke detector drives Life Safety Point 1 ("Amber") and Life
+> Safety Zone 1 ("Azure") to alarm, the alarms go confirmed to the operator
+> workstation (Device 389107), and LifeSafetyOperation silences and resets
+> them - each step proved by the Wire Tests. Still missing: Zone 1's
 > `Zone_Members` is always empty (no customer setter,
 > [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036)).
 > See [TODO.md](../TODO.md).
@@ -28,20 +27,22 @@ see [README.md](../README.md).
 | **Vendor Identifier** | 389 |
 | **Product Name** | CAS BACnet Stack Example - B-LSC |
 | **Product Model Number** | CAS BACnet Stack Example - B-LSC |
-| **Application Software Version** | 1.1.0 |
+| **Application Software Version** | 1.2.0 |
 | **Firmware Revision** | 6.0.23.0 (the CAS BACnet Stack version) |
 | **BACnet Protocol Version** | 1 |
 | **BACnet Protocol Revision** | 30 |
 
-**Product Description:** a BACnet/IP device built on the CAS BACnet Stack that
-implements as much of the B-LSC (Life Safety Controller) profile as the
-stack's customer-facing API supports today. It answers ReadProperty /
-ReadPropertyMultiple, accepts WriteProperty / WritePropertyMultiple, accepts
-SubscribeCOV, generates intrinsic life-safety event notifications, accepts
-AcknowledgeAlarm and GetEventInformation, synchronises its clock, and handles
+**Product Description:** a BACnet/IP life safety controller built on the CAS
+BACnet Stack. A smoke detector (simulated - the example's only input from the
+physical world) is Life Safety Point 1; its zone is Life Safety Zone 1. The
+device latches the detector's alarm, sends `CHANGE_OF_LIFE_SAFETY` event
+notifications to an operator workstation, and executes LifeSafetyOperation
+(silence / unsilence / reset), AcknowledgeAlarm and GetEventInformation. It
+also answers ReadProperty / ReadPropertyMultiple, accepts WriteProperty /
+WritePropertyMultiple and SubscribeCOV, synchronises its clock, and handles
 DeviceCommunicationControl and ReinitializeDevice. It is a tutorial for
 implementers of the B-LSC profile, and it documents - rather than hides - the
-one capability the linked stack cannot yet deliver (see the callout above).
+one thing the customer interface cannot yet deliver (see the callout above).
 
 ## 2. BACnet standardized device profile (Annex L)
 
@@ -75,11 +76,12 @@ this document.
 
 No other BIBBs are supported. In particular this device does **not** support
 scheduling (SCHED-*), trending (T-*), access control (any AC-*/ACC-*), or
-routing/gateway BIBBs. **DM-LSO-B** (LifeSafetyOperation) is implemented in
-`main.cpp` and its callback is registered, but the service is **not enabled**
-on the linked stack build (see section 4). That matters to the table above:
-AE-LS-B lists LifeSafetyOperation under Execute (135-2024 K.2.13, "able to
-process silence and reset operations"), so AE-LS-B is met only in part.
+routing/gateway BIBBs. The Annex L.5 table's B-LSC column is DS-RP-B, DS-WP-B,
+DS-COV-B, AE-LS-B, AE-ACK-B, AE-INFO-B, DM-DDB-A,B, DM-DOB-B and DM-DCC-B;
+DS-RPM-B, DS-WPM-B, DM-TS-B, DM-UTC-B and DM-RD-B are kept from the B-AAC base
+this example was seeded from. AE-LS-B's LifeSafetyOperation (Execute, 135-2024
+K.2.13: "able to process silence and reset operations on its life safety
+objects") is executed - see section 4.
 
 ## 4. Application services supported
 
@@ -90,7 +92,7 @@ process silence and reset operations"), so AE-LS-B is met only in part.
 | WriteProperty | no | **yes** |
 | WritePropertyMultiple | no | **yes** |
 | SubscribeCOV | no | **yes** |
-| ConfirmedEventNotification / UnconfirmedEventNotification | **yes** | - |
+| ConfirmedEventNotification | **yes** | - |
 | AcknowledgeAlarm | no | **yes** |
 | GetEventInformation | no | **yes** |
 | Who-Is | no | **yes** |
@@ -100,19 +102,24 @@ process silence and reset operations"), so AE-LS-B is met only in part.
 | DeviceCommunicationControl | no | **yes** |
 | ReinitializeDevice | no | **yes** |
 | TimeSynchronization / UTCTimeSynchronization | no | **yes** |
-| LifeSafetyOperation | no | no *(registered in code, not enabled on the linked build - see below)* |
+| LifeSafetyOperation | no | **yes** |
 
 An unsolicited I-Am is broadcast to the local subnet at start-up, as is a
 Who-Is (DM-DDB-A).
 
-**LifeSafetyOperation is implemented but not enabled.** `main.cpp` registers
-`BACnetStack_RegisterCallbackLifeSafetyOperation` and implements the
-silence/unsilence/reset handling, but the linked CAS BACnet Stack build was
-compiled without `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (not part of the
-`STACK_OPTION_TARGET_FULL` preset this series builds with), so the stack logs
-*"This feature was not compiled"* at start-up and the example deliberately
-leaves `Protocol_Services_Supported` bit 37 off rather than advertise a
-service the linked build cannot execute. See [TODO.md #2](../TODO.md).
+**Event notifications** go to the one recipient in Notification Class 1's
+`Recipient_List`: Device 389107 (named by device instance), confirmed, every
+transition. `Number_Of_APDU_Retries` is 3, so an unanswered notification is
+sent again.
+
+**LifeSafetyOperation** needs `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION`, the
+stack's documented public toggle (not part of the `STACK_OPTION_TARGET_FULL`
+preset). `CMakeLists.txt` defines it for a SOURCE build; a prebuilt STATIC/DLL
+library must be built with it (README "Build"). A RESET of an object that is
+not latched in alarm, or whose detector still sees smoke, and every
+RESET_FAULT, are refused with `OBJECT` / `INVALID_OPERATION_IN_THIS_STATE`
+(cl. 13.13.1.3.1). An operation addressed to Zone 1 also operates its member,
+Point 1; one with no object operates both.
 
 Any other confirmed service is rejected.
 
@@ -142,8 +149,8 @@ No object is dynamically creatable or deletable.
 | Analog Output | 1 | Chartreuse | Present_Value (commandable) | - |
 | Binary Output | 1 | Fuchsia | Present_Value (commandable) | - |
 | Multi-State Output | 1 | Indigo | Present_Value (commandable) | - |
-| Life Safety Point | 1 | Amber | Present_Value, Mode | - |
-| Life Safety Zone | 1 | Azure | Present_Value, Mode | - |
+| Life Safety Point | 1 | Amber | Mode | - |
+| Life Safety Zone | 1 | Azure | Mode | - |
 | Notification Class | 1 | Crimson | - | - |
 | Network Port | 1 | Vermilion | - | - |
 
@@ -185,7 +192,7 @@ handle data in all character sets.
 <!-- OBJECTS-PROPERTIES:BEGIN (generated by tools/gen-objects-properties.py from docs/objects.json - do not edit here) -->
 Every object this example creates, and every REQUIRED property of each (per ANSI/ASHRAE 135-2024 clause 12 and the stack's `docs/property-profile-reference.md`), plus the optional properties the example turns on. **Served by** says who answers a ReadProperty: the **stack** generates it, or the **app** serves it from a `GetProperty*` callback in `main.cpp`. A ⚠ row is a required property the app does not serve and the stack would fill with a default - that is a defect, not a feature.
 
-### Device 389007 "Chipkin Example B-LSC" - the device itself; the instance is configurable with --deviceID. The stack rows are device-wide facts only the stack knows - the protocol version and revision it implements, the services and object types it was configured with, the live object list and address-binding table. The accepted rows are the stack's configured defaults for APDU limits, segmentation, system status and database revision; an application that answered them from its own constants could contradict the stack, so this example does not
+### Device 389007 "Chipkin Example B-LSC" - the device itself; the instance is configurable with --deviceID. The stack rows are device-wide facts only the stack knows - the protocol version and revision it implements, the services and object types it was configured with, the live object list and address-binding table. Number_Of_APDU_Retries is served by the app as 3 (12.11.29 suggested default; the stack default of 0 would never retransmit a ConfirmedEventNotification). The accepted rows are the stack's configured defaults for APDU limits, segmentation, system status and database revision; an application that answered them from its own constants could contradict the stack, so this example does not
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|
@@ -207,7 +214,7 @@ Every object this example creates, and every REQUIRED property of each (per ANSI
 | Max_APDU_Length_Accepted | Unsigned | stack default, accepted (`CAS_BACNET_DEVICE_DEFAULT_MAX_APDU_LENGTH_ACCEPTED`) | no |
 | Segmentation_Supported | BACnetSegmentation | stack default, accepted (`BACnetSegmentation::segmentedBoth` with `STACK_OPTION_SEGME) | no |
 | APDU_Timeout | Unsigned | stack default, accepted (`CAS_BACNET_DEVICE_DEFAULT_APDU_TIMEOUT`) | no |
-| Number_Of_APDU_Retries | Unsigned | stack default, accepted (`CAS_BACNET_DEVICE_DEFAULT_NUMBER_OF_APDU_RETRIES`) | no |
+| Number_Of_APDU_Retries | Unsigned | app | no |
 | Device_Address_Binding | BACnetLIST of BACnetAddressBinding | stack | no |
 | Database_Revision | Unsigned | stack default, accepted (Generic UnsignedInteger default: `0`) | no |
 | Property_List | BACnetARRAY[N] of BACnetPropertyIdentifier | stack | no |
@@ -306,36 +313,36 @@ Every object this example creates, and every REQUIRED property of each (per ANSI
 | Property_List | BACnetARRAY[N] of BACnetPropertyIdentifier | stack | no |
 | Current_Command_Priority | BACnetOptionalUnsigned | stack | no |
 
-### Life Safety Point 1 "Amber" - Every listed property reads at stack 64b2cfac5 (up to abd4cee1 almost all answered unknown-object; fixed by stack #2187). F-LIFESAFETY / F-ALARM-LS (canonical: B-LSC). BACnetLifeSafetyState Present_Value: quiet(0)/alarm(2)/fault(3); Tracking_Value mirrors it (this example's simplification - see main.cpp file header for why it does not use the stack's internal, non-customer-exported life-safety engine). Present_Value is made WRITABLE beyond the profile's read-only column purely as this tutorial's alarm/fault trigger (mirrors B-AAC's Diamond). Mode is required-writable by the profile and accepted unconditionally (no customer-facing Accepted_Modes setter exists - see the file header); Accepted_Modes is therefore accepted at the stack's generic default. Event_State is NOT actually a stack default here - it is genuinely computed, because this example arms ChangeOfLifeSafety + fault intrinsic algorithms on Amber (SetIntrinsicChangeOfLifeSafetyAlgorithm/SetFaultLifeSafetyAlgorithm); it is marked accepted only because property-profile-reference.md's generic table does not know an algorithm was armed (same convention as B-AAC's Diamond). Present_Value is also DS-COV-B subscribable
+### Life Safety Point 1 "Amber" - The smoke detector. F-LIFESAFETY / F-ALARM-LS (canonical: B-LSC). Tracking_Value follows the SIMULATED detector (main.cpp section 1b: quiet(0) / alarm(2) / fault(3)); Present_Value LATCHES alarm until a LifeSafetyOperation RESET, which is refused (OBJECT / INVALID_OPERATION_IN_THIS_STATE) while the detector still sees smoke or when nothing is latched; a fault follows the detector and is not latched. Present_Value and Tracking_Value are read-only (Table 12-18). Silenced and Operation_Expected (SILENCE while sounding, RESET once silenced) follow LifeSafetyOperation. Reliability is served by the stack: this example's callback supplies the first stage (cl. 13.2.2.2, hardware - always no-fault-detected here) and the stack's FAULT_LIFE_SAFETY algorithm the second (MULTI_STATE_FAULT while Present_Value is fault). Mode is required-writable and accepted unconditionally (no customer-facing Accepted_Modes setter exists - see the file header); Accepted_Modes is therefore accepted at the stack's generic default. Event_State is NOT actually a stack default here - it is genuinely computed by the CHANGE_OF_LIFE_SAFETY and FAULT_LIFE_SAFETY algorithms this example arms; it is marked accepted only because property-profile-reference.md's generic table does not know an algorithm was armed (same convention as B-AAC's Diamond). Present_Value is also DS-COV-B subscribable
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|
 | Object_Identifier | BACnetObjectIdentifier | stack | no |
 | Object_Name | CharacterString | app | no |
 | Object_Type | BACnetObjectType | stack | no |
-| Present_Value | BACnetLifeSafetyState | app | yes |
+| Present_Value | BACnetLifeSafetyState | app | no |
 | Tracking_Value | BACnetLifeSafetyState | app | no |
 | Status_Flags | BACnetStatusFlags | stack | no |
 | Event_State | BACnetEventState | stack default, accepted (Generic Enumerated default: `0`) | no |
-| Reliability | BACnetReliability | app | no |
+| Reliability | BACnetReliability | stack | no |
 | Out_Of_Service | Boolean | app | no |
 | Mode | BACnetLifeSafetyMode | app | yes |
 | Accepted_Modes | BACnetLIST of BACnetLifeSafetyMode | stack default, accepted (Generic Enumerated default: `0`) | no |
 | Silenced | BACnetSilencedState | app | no |
 | Operation_Expected | BACnetLifeSafetyOperation | app | no |
 
-### Life Safety Zone 1 "Azure" - Every listed property reads at stack 64b2cfac5 (up to abd4cee1 almost all answered unknown-object; fixed by stack #2187). F-LIFESAFETY / F-ALARM-LS. Event_State is genuinely computed (same as Amber's - ChangeOfLifeSafety + fault algorithms armed on Azure too), marked accepted for the same generator-limitation reason. Same shape as Amber (this example holds Azure's own independent Present_Value rather than rolling it up from Zone_Members - the stack's real zone roll-up engine is not customer-exported, see the file header). Zone_Members (cl. 12.16, required, BACnetLIST of BACnetDeviceObjectReference) reads as an empty list at 64b2cfac5: the stack serves it, but only the test-tool BACnetStackTestTool_SetLifeSafetyZoneMembers can fill it, and the series does not use the test-tool interface. See TODO.md and stack #2036 (open)
+### Life Safety Zone 1 "Azure" - The smoke detector's zone. F-LIFESAFETY / F-ALARM-LS. Rolls up Life Safety Point 1 (Amber): takes its detector reading, latches alarm the same way, and a LifeSafetyOperation addressed to the zone also operates Amber. Event_State is genuinely computed (the same two algorithms are armed on Azure), marked accepted for the same generator-limitation reason. Reliability as Amber's. Zone_Members (cl. 12.16.26, required, BACnetLIST of BACnetDeviceObjectReference) should list Amber but reads as an empty list at 64b2cfac5: the stack serves it, but only the test-tool BACnetStackTestTool_SetLifeSafetyZoneMembers can fill it, and the series does not use the test-tool interface. [KNOWN GAP] in tests/life_safety_test.py; see TODO.md and stack #2036 (open)
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|
 | Object_Identifier | BACnetObjectIdentifier | stack | no |
 | Object_Name | CharacterString | app | no |
 | Object_Type | BACnetObjectType | stack | no |
-| Present_Value | BACnetLifeSafetyState | app | yes |
+| Present_Value | BACnetLifeSafetyState | app | no |
 | Tracking_Value | BACnetLifeSafetyState | app | no |
 | Status_Flags | BACnetStatusFlags | stack | no |
 | Event_State | BACnetEventState | stack default, accepted (Generic Enumerated default: `0`) | no |
-| Reliability | BACnetReliability | app | no |
+| Reliability | BACnetReliability | stack | no |
 | Out_Of_Service | Boolean | app | no |
 | Mode | BACnetLifeSafetyMode | app | yes |
 | Accepted_Modes | BACnetLIST of BACnetLifeSafetyMode | stack default, accepted (Generic Enumerated default: `0`) | no |
@@ -344,7 +351,7 @@ Every object this example creates, and every REQUIRED property of each (per ANSI
 | Zone_Members | BACnetLIST of BACnetDeviceObjectReference | stack default, accepted (None known - a read fails with `unknown-property` or an empt) | no |
 | Property_List | BACnetARRAY[N] of BACnetPropertyIdentifier | stack | no |
 
-### Notification Class 1 "Crimson" - Priority, Ack_Required and Recipient_List are NOT stack DEFAULTS - they are genuinely populated, by BACnetStack_AddNotificationClassObject (Priority, Ack_Required) and BACnetStack_AddRecipientToNotificationClass (Recipient_List) at start-up. They are marked accepted only because property-profile-reference.md's generic per-type table does not know about this object-specific host-configuration API and so cannot credit them as stack-served. Routes Amber's and Azure's CHANGE_OF_LIFE_SAFETY / fault notifications
+### Notification Class 1 "Crimson" - Priority, Ack_Required and Recipient_List are NOT stack DEFAULTS - they are genuinely populated, by BACnetStack_AddNotificationClassObject (Priority, Ack_Required) and BACnetStack_AddRecipientToNotificationClass (Recipient_List) at start-up. They are marked accepted only because property-profile-reference.md's generic per-type table does not know about this object-specific host-configuration API and so cannot credit them as stack-served. Routes Amber's and Azure's CHANGE_OF_LIFE_SAFETY / fault notifications, CONFIRMED, to one recipient named by DEVICE instance: 389107, the operator workstation (the stack resolves its address from its I-Am). Not writable: a B-LSC is not required to support modification of its event reporting (L.5.2)
 
 | Property | Datatype | Served by | Writable |
 |---|---|---|:---:|

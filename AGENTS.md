@@ -6,25 +6,28 @@ Guidance for AI coding agents working in this repository. See
 
 ## What this project is
 
-A **tutorial** C++ example that implements **as much of** the BACnet **B-LSC
-(Life Safety Controller)** profile as the standard CAS BACnet Stack's
-customer-facing API supports. It is one of a series - one git repo per BACnet
-profile - seeded from B-AAC (Advanced Application Controller) minus its
-Schedule/Calendar objects, and adds **intrinsic life-safety alarming** (AE-LS-B /
-AE-ACK-B / AE-INFO-B), **LifeSafetyOperation** (silence/reset), and **DS-COV-B**.
-At stack `64b2cfac5` Life Safety Point/Zone (Amber, Azure) serve every listed
-property and their intrinsic alarms work (the `unknown-object` defect of earlier
-pins is fixed by stack #2187). What B-LSC requires but this example still cannot
-do (LifeSafetyOperation is not compiled into the default stack build; Zone's
-`Zone_Members` cannot be set, [chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036))
-is documented in [TODO.md](TODO.md) - keep that file honest and current. The top priority is that the code reads like a tutorial a
-customer can learn from and copy-paste. Favour clarity over cleverness.
+A **tutorial** C++ example of the BACnet **B-LSC (Life Safety Controller)**
+profile, and it is **Profile-functional** (the series bar): a SIMULATED smoke
+detector drives Life Safety Point 1 (Amber) and its zone (Azure) to a latched
+life-safety alarm, the alarms go confirmed to an operator workstation named by
+device instance (389107), and the workstation silences, acknowledges and resets
+them with LifeSafetyOperation / AcknowledgeAlarm - proved by Wire Tests against a
+Python Peer, with the Failure Modes (reset refused while smoke is present, a
+detector fault, an unacknowledged alarm). It is one of a series - one git repo per
+BACnet profile - seeded from B-AAC minus its Schedule/Calendar objects. What B-LSC
+requires but the customer interface still cannot do (Zone's `Zone_Members`,
+[chipkin/cas-bacnet-stack#2036](https://github.com/chipkin/cas-bacnet-stack/issues/2036))
+is a `[KNOWN GAP]` in [TODO.md](TODO.md) and the Wire Tests - keep both honest and
+current. The top priority is that the code reads like a tutorial a customer can
+learn from and copy-paste. Favour clarity over cleverness.
 
 ## Layout
 
 This repository is self-contained:
 
-- `main.cpp` - the example device.
+- `main.cpp` - the example device. Section 1b is the smoke-detector SIMULATION.
+- `simulation/` - the Wire Tests' loopback-only test control channel (SIMULATION,
+  off unless `BLSC_SIMULATION_CONTROL_PORT` is set). Never a CLI option.
 - `common/` - the shared helper (vendored).
 - `README.md` - what this example is. Keep it short and about THIS example
   only.
@@ -38,8 +41,10 @@ This repository is self-contained:
   branch.
 - `TODO.md` - what B-LSC requires that this example cannot yet do, and why.
   Keep it honest and current.
-- `tests/` + `wiretest/` - the discovery Wire Test and the series' shared
-  harness (vendored).
+- `tests/` + `wiretest/` - the Wire Tests (discovery, `life_safety_test.py`,
+  `fault_test.py`) and the series' shared harness (vendored; frozen at 0.6.0 -
+  generic additions go in `tests/wiretest_extras.py`). Every check must fail when
+  its feature is removed: mutation-verify any change (tests/README.md).
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack** as a git submodule
   (private; compiled from source). After cloning, run
   `git submodule update --init --recursive`.
@@ -101,9 +106,17 @@ Interactive keys while running: `h` help, `q` quit, up/down nudge Analog Input 1
   so the stack re-evaluates and fires the notification - the doc comment on that
   function is not decorative: "a host that never calls it will never generate an
   event notification."
-- LifeSafetyOperation: register `BACnetStack_RegisterCallbackLifeSafetyOperation`;
-  `useObjectIdentifier == false` means "apply to every life-safety object in this
-  device" (cl. 13.8.1.4).
+- LifeSafetyOperation: needs `STACK_OPTION_DM_LSO_LIFE_SAFETY_OPERATION` (the
+  stack's documented public toggle, defined in `CMakeLists.txt` for SOURCE builds;
+  a STATIC/DLL library must be built with it), plus
+  `BACnetStack_RegisterCallbackLifeSafetyOperation` and the service enabled. The
+  stack checks the named object exists; the callback decides whether the operation
+  fits the object's current state (`OperationFits()`), refusing with
+  `INVALID_OPERATION_IN_THIS_STATE`. `useObjectIdentifier == false` means "all
+  applicable objects" (cl. 13.13.1.1.4).
+- Reliability on Amber/Azure: the callback serves only cl. 13.2.2.2's first stage
+  (no-fault-detected); the stack's FAULT_LIFE_SAFETY algorithm supplies
+  `multi-state-fault` and serves the combination. Do not compute it in the callback.
 - DS-COV-B: `BACnetStack_SetPropertySubscribable` on the property, plus
   `SetCOVSettings`/`SetMaxActiveCOVSubscriptions`; `BACnetStack_UpdateValue` also
   feeds COV subscribers - one call does both jobs, there is no separate "notify
