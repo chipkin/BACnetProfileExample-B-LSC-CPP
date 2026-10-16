@@ -63,7 +63,7 @@ prebuilt binaries yet; clone this repository and [build it yourself](#build).
 > **Versions:** this document describes **example v1.2.0**, built and
 > verified against the **CAS BACnet Stack** (`submodules/cas-bacnet-stack` @
 > `64b2cfac5`, reporting **6.0.23**), at **Protocol_Revision 30**, with the
-> vendored `common/` helper at **v3.4.0** and `wiretest/` at **v0.6.0**.
+> vendored `common/` helper at **v3.4.0** and `wiretest/` at **v0.7.0**.
 > Running the example prints the first three - if what it prints disagrees
 > with this line, trust the program and check `CHANGELOG.md`.
 

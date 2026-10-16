@@ -60,6 +60,7 @@ alarm detection and control. It supports life safety objects."
   (regenerated; Number_Of_APDU_Retries and Reliability rows), AGENTS, TODO (rewritten:
   Zone_Members `[KNOWN GAP]`, untested COV / silent recipient / unsilence),
   release.yml step name. APP_VERSION 1.1.0 -> 1.2.0.
+- Wire Tests use the shared `wiretest/` 0.7.0: `tests/wiretest_extras.py` is folded into it (`wiretest.services` life safety, `wiretest.SimulationControl`, `Workstation.announce`), and `request_with_retry` is `wiretest.Workstation(retries=1)`.
 
 ### Verified (2026-10-16)
 

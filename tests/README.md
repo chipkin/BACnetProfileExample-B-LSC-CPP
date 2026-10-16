@@ -24,7 +24,7 @@ uses `--port` + 1. It takes about 45 seconds. CI (`.github/workflows/release.yml
 runs it on Linux after the smoke test.
 
 A request that gets no answer at all is sent once more with a visible `[RETRY]`
-line (`wiretest_extras.request_with_retry`): a busy Windows host drops about 3 UDP
+line (the workstation is `wiretest.Workstation(retries=1)`): a busy Windows host drops about 3 UDP
 datagrams in 1000. An Error or Reject is an answer and is never retried.
 
 ## The setup
@@ -52,7 +52,6 @@ WriteProperty of `Present_Value` is refused.
 | File | What it is |
 |---|---|
 | `lsc_setup.py` | This controller's numbers, starting it with the control channel, the requests the tests send. |
-| `wiretest_extras.py` | **Generic** helpers wiretest 0.6.0 lacks, proposed for 0.7.0: `life_safety_operation_request`, `announce` (a Workstation's I-Am), `SimulationControl` (the control-channel client), `request_with_retry`, and the life-safety constants. Nothing in it names B-LSC. |
 | `discovery_test.py` | Every listed property reads (unchanged from 1.1.0). |
 | `life_safety_test.py` | The scenario and two Failure Modes. |
 | `fault_test.py` | The detector-fault Failure Mode. |

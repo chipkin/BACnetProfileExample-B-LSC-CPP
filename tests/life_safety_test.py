@@ -36,11 +36,11 @@ import struct
 import sys
 
 import lsc_setup as setup
-from lsc_setup import Workstation, alarm_codec, extras, wiretest
+from lsc_setup import alarm_codec, wiretest
 from wiretest import record
 
 ALARM = alarm_codec
-LIFE_SAFETY_ALARM = extras.EVENT_STATE_LIFE_SAFETY_ALARM
+LIFE_SAFETY_ALARM = wiretest.alarm.EVENT_STATE_LIFE_SAFETY_ALARM
 
 
 def check_alarm(notification, object_reference, name):
@@ -55,7 +55,7 @@ def check_alarm(notification, object_reference, name):
     record(f"  ... CHANGE_OF_LIFE_SAFETY, normal -> LIFE_SAFETY_ALARM, ack required, priority 100",
            (notification.event_type, notification.from_state, notification.to_state, notification.ack_required,
             notification.priority) ==
-           (extras.EVENT_TYPE_CHANGE_OF_LIFE_SAFETY, ALARM.EVENT_STATE_NORMAL, LIFE_SAFETY_ALARM, True,
+           (wiretest.alarm.EVENT_TYPE_CHANGE_OF_LIFE_SAFETY, ALARM.EVENT_STATE_NORMAL, LIFE_SAFETY_ALARM, True,
             setup.PRIORITY_TO_OFFNORMAL), notification.describe())
     return True
 
@@ -66,11 +66,11 @@ def run(workstation, bystander, args):
     record("Control: GetEventInformation lists no event before any smoke", summaries == [],
            f"read {summaries}" if summaries is not None else answer.describe())
     value = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE)
-    record("Control: the detector (Life Safety Point 1) reads quiet", value == extras.LIFE_SAFETY_STATE_QUIET,
+    record("Control: the detector (Life Safety Point 1) reads quiet", value == wiretest.services.LIFE_SAFETY_STATE_QUIET,
            f"read {value}")
-    answer = extras.request_with_retry(workstation, lambda invoke_id: wiretest.write_property_request(
+    answer = workstation.request(lambda invoke_id: wiretest.write_property_request(
         invoke_id, *setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE,
-        wiretest.application_enumerated(extras.LIFE_SAFETY_STATE_ALARM)), args.port)
+        wiretest.application_enumerated(wiretest.services.LIFE_SAFETY_STATE_ALARM)), args.port)
     record("Control: a client cannot write the detector's Present_Value (write-access-denied)",
            answer.error == (wiretest.ERROR_CLASS_PROPERTY, wiretest.ERROR_CODE_WRITE_ACCESS_DENIED),
            answer.describe())
@@ -78,7 +78,7 @@ def run(workstation, bystander, args):
     record("Device Number_Of_APDU_Retries is 3, so an alarm the workstation misses is sent again",
            retries == 3, f"read {retries}")
 
-    zone_members = workstation.read_property(args.port, *setup.AZURE, extras.PROPERTY_ZONE_MEMBERS)
+    zone_members = workstation.read_property(args.port, *setup.AZURE, wiretest.PROPERTY_ZONE_MEMBERS)
     wiretest.known_gap("Life Safety Zone 1's Zone_Members lists Life Safety Point 1, the member it rolls up",
                        zone_members.value_octets is not None and
                        struct.pack(">I", (setup.AMBER[0] << 22) | setup.AMBER[1]) in zone_members.value_octets,
@@ -106,15 +106,15 @@ def run(workstation, bystander, args):
     record("Control: a workstation that is not Device 389107 receives nothing", stray is None,
            setup.waited(stray, setup.QUIET_WAIT))
     readings = {name: setup.read(workstation, args, setup.AMBER, identifier) for name, identifier in (
-        ("Tracking_Value", extras.PROPERTY_TRACKING_VALUE), ("Present_Value", wiretest.PROPERTY_PRESENT_VALUE),
-        ("Event_State", ALARM.PROPERTY_EVENT_STATE), ("Silenced", extras.PROPERTY_SILENCED),
-        ("Operation_Expected", extras.PROPERTY_OPERATION_EXPECTED))}
+        ("Tracking_Value", wiretest.PROPERTY_TRACKING_VALUE), ("Present_Value", wiretest.PROPERTY_PRESENT_VALUE),
+        ("Event_State", ALARM.PROPERTY_EVENT_STATE), ("Silenced", wiretest.PROPERTY_SILENCED),
+        ("Operation_Expected", wiretest.PROPERTY_OPERATION_EXPECTED))}
     record("Point: Tracking_Value and Present_Value alarm, Event_State LIFE_SAFETY_ALARM",
            (readings["Tracking_Value"], readings["Present_Value"], readings["Event_State"]) ==
-           (extras.LIFE_SAFETY_STATE_ALARM, extras.LIFE_SAFETY_STATE_ALARM, LIFE_SAFETY_ALARM), f"read {readings}")
+           (wiretest.services.LIFE_SAFETY_STATE_ALARM, wiretest.services.LIFE_SAFETY_STATE_ALARM, LIFE_SAFETY_ALARM), f"read {readings}")
     record("Point: unsilenced, Operation_Expected SILENCE",
            (readings["Silenced"], readings["Operation_Expected"]) ==
-           (extras.SILENCED_UNSILENCED, extras.LIFE_SAFETY_OPERATION_SILENCE), f"read {readings}")
+           (wiretest.services.SILENCED_UNSILENCED, wiretest.services.LIFE_SAFETY_OPERATION_SILENCE), f"read {readings}")
 
     # --- 3. GetEventInformation --------------------------------------------------------
     summaries, _, answer = setup.get_event_information(workstation, args)
@@ -126,20 +126,20 @@ def run(workstation, bystander, args):
                setup.describe_summary(entry) if summaries is not None else answer.describe())
 
     # --- 4. Failure Mode: reset while the smoke is still there ---------------------------
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
     record("Failure Mode: RESET while the detector still sees smoke -> OBJECT / INVALID_OPERATION_IN_THIS_STATE",
-           answer.error == (wiretest.ERROR_CLASS_OBJECT, extras.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
+           answer.error == (wiretest.ERROR_CLASS_OBJECT, wiretest.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
            answer.describe())
     value = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE)
-    record("  ... and the alarm stays latched", value == extras.LIFE_SAFETY_STATE_ALARM, f"read {value}")
+    record("  ... and the alarm stays latched", value == wiretest.services.LIFE_SAFETY_STATE_ALARM, f"read {value}")
 
     # --- 5. Silence ----------------------------------------------------------------------
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_SILENCE, setup.AMBER)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_SILENCE, setup.AMBER)
     record("LifeSafetyOperation SILENCE on the point gets a SimpleACK", answer.ok, answer.describe())
-    silenced = setup.read(workstation, args, setup.AMBER, extras.PROPERTY_SILENCED)
-    expected = setup.read(workstation, args, setup.AMBER, extras.PROPERTY_OPERATION_EXPECTED)
+    silenced = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_SILENCED)
+    expected = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_OPERATION_EXPECTED)
     record("Point: Silenced all-silenced, Operation_Expected RESET",
-           (silenced, expected) == (extras.SILENCED_ALL, extras.LIFE_SAFETY_OPERATION_RESET),
+           (silenced, expected) == (wiretest.services.SILENCED_ALL, wiretest.services.LIFE_SAFETY_OPERATION_RESET),
            f"read {silenced}, {expected}")
 
     # --- 6. Acknowledge -----------------------------------------------------------------
@@ -159,12 +159,12 @@ def run(workstation, bystander, args):
     mark = workstation.mark()
     reply = setup.detector(args, "quiet")
     record("SIMULATION: the smoke clears", reply == "ok", f"reply {reply!r}")
-    tracking = setup.read(workstation, args, setup.AMBER, extras.PROPERTY_TRACKING_VALUE)
+    tracking = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_TRACKING_VALUE)
     value = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE)
     event_state = setup.read(workstation, args, setup.AMBER, ALARM.PROPERTY_EVENT_STATE)
     record("Point: Tracking_Value quiet, Present_Value still latched in alarm, Event_State LIFE_SAFETY_ALARM",
            (tracking, value, event_state) ==
-           (extras.LIFE_SAFETY_STATE_QUIET, extras.LIFE_SAFETY_STATE_ALARM, LIFE_SAFETY_ALARM),
+           (wiretest.services.LIFE_SAFETY_STATE_QUIET, wiretest.services.LIFE_SAFETY_STATE_ALARM, LIFE_SAFETY_ALARM),
            f"read {tracking}, {value}, {event_state}")
     early = workstation.wait_for_notification(
         setup.notification_from(setup.AMBER, ALARM.NOTIFY_TYPE_ALARM, ALARM.EVENT_STATE_NORMAL), setup.QUIET_WAIT, mark)
@@ -173,12 +173,12 @@ def run(workstation, bystander, args):
 
     # --- 8. Reset --------------------------------------------------------------------------
     mark = workstation.mark()
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
     record("LifeSafetyOperation RESET on the point, smoke gone, gets a SimpleACK", answer.ok, answer.describe())
     value = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE)
-    silenced = setup.read(workstation, args, setup.AMBER, extras.PROPERTY_SILENCED)
+    silenced = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_SILENCED)
     record("Point: Present_Value quiet, unsilenced", (value, silenced) ==
-           (extras.LIFE_SAFETY_STATE_QUIET, extras.SILENCED_UNSILENCED), f"read {value}, {silenced}")
+           (wiretest.services.LIFE_SAFETY_STATE_QUIET, wiretest.services.SILENCED_UNSILENCED), f"read {value}, {silenced}")
     to_normal = workstation.wait_for_notification(
         setup.notification_from(setup.AMBER, ALARM.NOTIFY_TYPE_ALARM, ALARM.EVENT_STATE_NORMAL),
         setup.NOTIFICATION_WAIT, mark)
@@ -188,9 +188,9 @@ def run(workstation, bystander, args):
            (LIFE_SAFETY_ALARM, True, setup.PRIORITY_TO_NORMAL), setup.waited(to_normal))
     zone_value = setup.read(workstation, args, setup.AZURE, wiretest.PROPERTY_PRESENT_VALUE)
     record("Control: the zone was not named, so it is still latched in alarm",
-           zone_value == extras.LIFE_SAFETY_STATE_ALARM, f"read {zone_value}")
+           zone_value == wiretest.services.LIFE_SAFETY_STATE_ALARM, f"read {zone_value}")
     mark = workstation.mark()
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_RESET)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_RESET)
     record("LifeSafetyOperation RESET with no object (all applicable objects) gets a SimpleACK", answer.ok,
            answer.describe())
     zone_normal = workstation.wait_for_notification(
@@ -200,9 +200,9 @@ def run(workstation, bystander, args):
            setup.waited(zone_normal))
 
     # --- 9. Failure Modes: nothing to reset; an alarm nobody acknowledged ----------------
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_RESET, setup.AMBER)
     record("Failure Mode: RESET of a point that is not latched -> OBJECT / INVALID_OPERATION_IN_THIS_STATE",
-           answer.error == (wiretest.ERROR_CLASS_OBJECT, extras.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
+           answer.error == (wiretest.ERROR_CLASS_OBJECT, wiretest.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
            answer.describe())
     summaries, _, answer = setup.get_event_information(workstation, args)
     zone = setup.summary_for(summaries, setup.AZURE)
@@ -219,8 +219,8 @@ def run(workstation, bystander, args):
 def main():
     args = setup.parser(__doc__).parse_args()
     controller = setup.start_controller(args)
-    workstation = Workstation()
-    bystander = Workstation()
+    workstation = setup.workstation()
+    bystander = setup.workstation()
     try:
         run(workstation, bystander, args)
     finally:

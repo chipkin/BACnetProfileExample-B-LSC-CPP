@@ -42,8 +42,8 @@ This repository is self-contained:
 - `TODO.md` - what B-LSC requires that this example cannot yet do, and why.
   Keep it honest and current.
 - `tests/` + `wiretest/` - the Wire Tests (discovery, `life_safety_test.py`,
-  `fault_test.py`) and the series' shared harness (vendored; frozen at 0.6.0 -
-  generic additions go in `tests/wiretest_extras.py`). Every check must fail when
+  `fault_test.py`) and the series' shared harness (vendored at 0.7.0; change it
+  only as the series does, in every example). Every check must fail when
   its feature is removed: mutation-verify any change (tests/README.md).
 - `submodules/cas-bacnet-stack/` - the **CAS BACnet Stack** as a git submodule
   (private; compiled from source). After cloning, run

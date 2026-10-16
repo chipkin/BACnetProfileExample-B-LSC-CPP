@@ -23,7 +23,7 @@ channel pulls the head.
 import sys
 
 import lsc_setup as setup
-from lsc_setup import Workstation, alarm_codec, extras, wiretest
+from lsc_setup import alarm_codec, wiretest
 from wiretest import record
 
 ALARM = alarm_codec
@@ -51,12 +51,12 @@ def run(workstation, args):
 
     # --- 3. What the point reports -------------------------------------------------------
     value = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_PRESENT_VALUE)
-    tracking = setup.read(workstation, args, setup.AMBER, extras.PROPERTY_TRACKING_VALUE)
+    tracking = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_TRACKING_VALUE)
     record("Point: Present_Value and Tracking_Value fault",
-           (value, tracking) == (extras.LIFE_SAFETY_STATE_FAULT, extras.LIFE_SAFETY_STATE_FAULT),
+           (value, tracking) == (wiretest.services.LIFE_SAFETY_STATE_FAULT, wiretest.services.LIFE_SAFETY_STATE_FAULT),
            f"read {value}, {tracking}")
     reliability = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_RELIABILITY)
-    record("Point: Reliability MULTI_STATE_FAULT", reliability == extras.RELIABILITY_MULTI_STATE_FAULT,
+    record("Point: Reliability MULTI_STATE_FAULT", reliability == wiretest.RELIABILITY_MULTI_STATE_FAULT,
            f"read {reliability}")
     flags = setup.read(workstation, args, setup.AMBER, wiretest.PROPERTY_STATUS_FLAGS)
     record("Point: Status_Flags in-alarm and fault set",
@@ -71,9 +71,9 @@ def run(workstation, args):
            setup.describe_summary(entry) if summaries is not None else answer.describe())
 
     # --- 4. An operator cannot clear a detector fault -------------------------------------
-    answer = setup.life_safety_operation(workstation, args, extras.LIFE_SAFETY_OPERATION_RESET_FAULT, setup.AMBER)
+    answer = setup.life_safety_operation(workstation, args, wiretest.services.LIFE_SAFETY_OPERATION_RESET_FAULT, setup.AMBER)
     record("Failure Mode: RESET_FAULT while the detector is faulty -> OBJECT / INVALID_OPERATION_IN_THIS_STATE",
-           answer.error == (wiretest.ERROR_CLASS_OBJECT, extras.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
+           answer.error == (wiretest.ERROR_CLASS_OBJECT, wiretest.ERROR_CODE_INVALID_OPERATION_IN_THIS_STATE),
            answer.describe())
 
     # --- 5. Repaired ---------------------------------------------------------------------
@@ -95,7 +95,7 @@ def run(workstation, args):
 def main():
     args = setup.parser(__doc__).parse_args()
     controller = setup.start_controller(args)
-    workstation = Workstation()
+    workstation = setup.workstation()
     try:
         run(workstation, args)
     finally:
